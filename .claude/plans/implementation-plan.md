@@ -20,7 +20,7 @@ The project focuses on architecture, reliability (retries, DLQ, idempotency), AI
     - One shared database with no separate read store (justified in an ADR).
     - `ICommandHandler<TCommand,TResult>` and `IQueryHandler<TQuery,TResult>` with decorators for FluentValidation and logging, registered via Scrutor.
     - Business errors return `Result<T>` / `Error` instead of throwing, mapped to ProblemDetails.
-- **Messaging:** MassTransit **v8** (OSS; v9 is commercial) with RabbitMQ, EF Core transactional outbox/inbox, retry, redelivery and a DLQ (`_error` queue).
+- **Messaging:** MassTransit **v8** (OSS; v9 is commercial) with RabbitMQ, EF Core transactional outbox/inbox, exponential retry and a DLQ (`_error` queue). No delayed redelivery: on RabbitMQ it needs the delayed-message-exchange plugin, which the stock image lacks.
 - **AI:** Anthropic Claude via the official `Anthropic` NuGet package. The model is configurable and defaults to the lightest one, `claude-haiku-4-5-20251001`. Structured output uses forced tool use with a JSON schema. Without `ANTHROPIC_API_KEY`, a deterministic `FakeDocumentAnalyzer` runs and a warning is logged.
 - **External API:** **Nager.Date** (`https://date.nager.at/api/v3/PublicHolidays/{year}/{countryCode}`, no key required).
   - Split of responsibility: the AI **only identifies** dates and their meaning. It returns a `type` (StartDate, EndDate, EffectiveDate, SigningDate, PaymentDeadline, TerminationDeadline, ExpiryDate or Other) and a `description`, e.g. "Invoice payment due date".
@@ -79,15 +79,16 @@ README.md
    - Return `202 Accepted` with a Location header.
 2. **Worker** (`DocumentUploadedConsumer`):
    - Idempotency: the MassTransit inbox plus a conditional `Pending → Processing` transition (concurrency via `xmin`). A `Completed` document is skipped. A deleted document is acked and skipped.
+   - Each attempt runs inside the EF outbox transaction, so `Processing` is not saved on its own: an early update would lock the row for the whole AI call and block a concurrent delete. The `xmin` check on the final save rejects the outcome if the document changed or was deleted meanwhile (the retry then skips it).
    - Download the file from SeaweedFS and extract the text (`ITextExtractor` per content type), truncated to a token budget.
-   - `IDocumentAnalyzer` (Claude): forced `record_analysis` tool with a JSON schema, validated by FluentValidation (`AnalysisResultValidator`). An invalid response gets one retry that includes the validation errors, then the document is marked `Failed`.
+   - `IDocumentAnalyzer` (Claude): forced `record_analysis` tool with a JSON schema, validated by FluentValidation (`AnalysisResultValidator`). An invalid response is sent back once as an `is_error` tool result listing the validation errors; if the correction is invalid too, the document is marked `Failed`. No `temperature` is sent: newer models reject values other than 1.0.
    - `IDateInsightsService` with `IPublicHolidayProvider` (Nager.Date typed HttpClient with resilience and IMemoryCache per year/country). Weekends are computed locally. A Nager.Date failure does **not** fail the document: dates are saved with `CalendarCheck = null`, a warning is logged, and the UI shows "Calendar check unavailable".
    - Save the analysis, mark the document `Completed`, and publish `DocumentStatusChanged` through the outbox.
 3. **Transient failures** (AI 429/5xx, network):
-   - `Microsoft.Extensions.Http.Resilience` on the HttpClients, plus MassTransit `UseMessageRetry` (exponential) and `UseDelayedRedelivery`.
+   - `Microsoft.Extensions.Http.Resilience` on the Nager.Date HttpClient, the SDK's own retries for Claude, plus MassTransit `UseMessageRetry` (exponential, `Messaging:Retry`).
    - Once retries are exhausted, a `Fault<DocumentUploaded>` consumer sets `Failed` and the message lands in the `_error` queue (DLQ).
    - Permanent errors (no text, unsupported file) fail the document immediately, without retries.
-4. **Worker crash:** RabbitMQ redelivers the unacked message. A document stuck in `Processing` can be reclaimed once its last update is older than a timeout.
+4. **Worker crash:** the attempt's transaction rolls back, so the document is still `Pending`, and RabbitMQ redelivers the unacked message. (The domain can also reclaim a document stuck in `Processing` once its last update is older than a timeout.)
 5. **Real-time:** the API consumes `DocumentStatusChanged` and pushes it through `DocumentsHub` to the `user:{id}` group. The hub reads the JWT from the query string. The UI invalidates the affected TanStack Query queries.
 
 ## API (Minimal API, OpenAPI + Scalar)
@@ -132,14 +133,14 @@ README.md
   - `AnalysisResultValidator`.
   - Upload validation (size, type, magic bytes).
   - `JwtTokenService` and refresh-token rotation.
-  - `DocumentUploadedConsumer`: idempotency, permanent vs transient errors, and a Nager.Date failure still ending `Completed` without a CalendarCheck.
+  - `ProcessDocumentCommandHandler` (the logic behind `DocumentUploadedConsumer`): idempotency, permanent vs transient errors, and a Nager.Date failure still ending `Completed` without a CalendarCheck.
   - `DateInsightsService`: weekend, holiday, next business day skipping a weekend plus a holiday, no dates → no API call, multiple years → one call per year.
   - `NagerDateHolidayProvider`, using a fake HttpMessageHandler.
   - `ClaudeDocumentAnalyzer`: tool_use parsing.
 - **Integration:**
   - Auth: register → login → refresh → logout.
   - Authorization: 401 without a token, and user B gets 404 for user A's document.
-  - Processing: upload → worker (in-process MassTransit, fake analyzer) → `Completed` → GET analysis → download → delete.
+  - Processing: upload → worker (in-process MassTransit, fake analyzer, stubbed holidays) → `Completed` → GET analysis → download → delete; a PDF without text → `Failed`; transient errors → retries → `Fault` → `Failed`.
 - **CI** (`.github/workflows/ci.yml`): `dotnet build/test` (Testcontainers runs on ubuntu-latest) and `npm ci && npm run lint && npm run build` for the frontend.
 
 ## Implementation order

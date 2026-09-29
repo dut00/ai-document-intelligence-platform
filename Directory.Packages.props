@@ -33,6 +33,12 @@
     <PackageVersion Include="AWSSDK.S3" Version="4.0.103.4" />
   </ItemGroup>
 
+  <ItemGroup Label="Document processing">
+    <PackageVersion Include="Anthropic" Version="12.51.0" />
+    <PackageVersion Include="PdfPig" Version="0.1.16" />
+    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
+  </ItemGroup>
+
   <ItemGroup Label="Observability">
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />

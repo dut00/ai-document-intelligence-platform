@@ -1,9 +1,6 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using DocumentIntelligence.Application.Abstractions.Paging;
 using DocumentIntelligence.Application.Abstractions.Storage;
 using DocumentIntelligence.Application.Documents;
@@ -13,7 +10,6 @@ using DocumentIntelligence.Domain.Documents;
 using DocumentIntelligence.Domain.Documents.Analysis;
 using DocumentIntelligence.Domain.Users;
 using DocumentIntelligence.IntegrationTests.Infrastructure;
-using MassTransit.Testing;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -21,11 +17,6 @@ namespace DocumentIntelligence.IntegrationTests;
 
 public sealed class DocumentEndpointsTests(ApiFactory factory)
 {
-    private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web)
-    {
-        Converters = { new JsonStringEnumConverter() },
-    };
-
     private static readonly byte[] _textContent = "Payment is due on 11 November 2026.\nTotal: 1200 PLN\n"u8.ToArray();
 
     private static CancellationToken CancellationToken => TestContext.Current.CancellationToken;
@@ -35,21 +26,22 @@ public sealed class DocumentEndpointsTests(ApiFactory factory)
     {
         var (client, userId) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
 
-        var upload = await UploadAsync(client, "invoice.txt", "text/plain", _textContent);
+        var upload = await client.UploadDocumentAsync("invoice.txt", "text/plain", _textContent);
         upload.StatusCode.ShouldBe(HttpStatusCode.Accepted);
-        var uploaded = await ReadAsync<DocumentSummary>(upload);
+        var uploaded = await upload.ReadAsync<DocumentSummary>();
         uploaded.Status.ShouldBe(DocumentStatus.Pending);
         upload.Headers.Location!.ToString().ShouldBe($"/api/documents/{uploaded.Id}");
-        (await PublishedAsync<DocumentUploaded>(message => message.DocumentId == uploaded.Id)).ShouldBeTrue();
+        (await factory.PublishedAsync<DocumentUploaded>(message => message.DocumentId == uploaded.Id)).ShouldBeTrue();
 
-        var list = await ReadAsync<PagedResponse<DocumentSummary>>(await client.GetAsync("/api/documents", CancellationToken));
+        var list = await client.GetAsync<PagedResponse<DocumentSummary>>("/api/documents");
         list.Items.ShouldHaveSingleItem().Id.ShouldBe(uploaded.Id);
 
-        var details = await ReadAsync<DocumentDetailsResponse>(await client.GetAsync($"/api/documents/{uploaded.Id}", CancellationToken));
+        var details = await client.WaitUntilProcessedAsync(uploaded.Id);
+        details.Status.ShouldBe(DocumentStatus.Completed);
         details.FileName.ShouldBe("invoice.txt");
         details.ContentType.ShouldBe("text/plain");
         details.SizeBytes.ShouldBe(_textContent.Length);
-        details.Analysis.ShouldBeNull();
+        details.Analysis.ShouldNotBeNull();
 
         var download = await client.GetAsync($"/api/documents/{uploaded.Id}/download", CancellationToken);
         download.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -63,7 +55,7 @@ public sealed class DocumentEndpointsTests(ApiFactory factory)
         (await client.GetAsync($"/api/documents/{uploaded.Id}/download", CancellationToken)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
 
         // The Worker's consumer removes the stored content once DocumentDeleted leaves the outbox.
-        (await ConsumedAsync<DocumentDeleted>(message => message.DocumentId == uploaded.Id)).ShouldBeTrue();
+        (await factory.ConsumedAsync<DocumentDeleted>(message => message.DocumentId == uploaded.Id)).ShouldBeTrue();
         await using var scope = factory.Services.CreateAsyncScope();
         var storage = scope.ServiceProvider.GetRequiredService<IFileStorage>();
         var storageKey = StorageKey.For(userId, new DocumentId(uploaded.Id));
@@ -77,25 +69,27 @@ public sealed class DocumentEndpointsTests(ApiFactory factory)
         var ids = new List<Guid>();
         foreach (var name in new[] { "a.txt", "b.txt", "c.txt" })
         {
-            ids.Add((await ReadAsync<DocumentSummary>(await UploadAsync(client, name, "text/plain", _textContent))).Id);
+            ids.Add((await (await client.UploadDocumentAsync(name, "text/plain", _textContent)).ReadAsync<DocumentSummary>()).Id);
         }
 
-        var firstPage = await ReadAsync<PagedResponse<DocumentSummary>>(
-            await client.GetAsync("/api/documents?page=1&pageSize=2", CancellationToken));
+        foreach (var id in ids)
+        {
+            await client.WaitUntilProcessedAsync(id);
+        }
+
+        var firstPage = await client.GetAsync<PagedResponse<DocumentSummary>>("/api/documents?page=1&pageSize=2");
         firstPage.TotalCount.ShouldBe(3);
         firstPage.TotalPages.ShouldBe(2);
         firstPage.Items.Select(item => item.Id).ShouldBe([ids[2], ids[1]]);
 
-        var secondPage = await ReadAsync<PagedResponse<DocumentSummary>>(
-            await client.GetAsync("/api/documents?page=2&pageSize=2", CancellationToken));
+        var secondPage = await client.GetAsync<PagedResponse<DocumentSummary>>("/api/documents?page=2&pageSize=2");
         secondPage.Items.ShouldHaveSingleItem().Id.ShouldBe(ids[0]);
 
-        var completed = await ReadAsync<PagedResponse<DocumentSummary>>(
-            await client.GetAsync("/api/documents?status=Completed", CancellationToken));
-        completed.TotalCount.ShouldBe(0);
+        (await client.GetAsync<PagedResponse<DocumentSummary>>("/api/documents?status=Completed")).TotalCount.ShouldBe(3);
+        (await client.GetAsync<PagedResponse<DocumentSummary>>("/api/documents?status=Pending")).TotalCount.ShouldBe(0);
 
-        var stats = await ReadAsync<DocumentStatsResponse>(await client.GetAsync("/api/documents/stats", CancellationToken));
-        stats.ShouldBe(new DocumentStatsResponse(Total: 3, Pending: 3, Processing: 0, Completed: 0, Failed: 0));
+        var stats = await client.GetAsync<DocumentStatsResponse>("/api/documents/stats");
+        stats.ShouldBe(new DocumentStatsResponse(Total: 3, Pending: 0, Processing: 0, Completed: 3, Failed: 0));
     }
 
     [Fact]
@@ -117,7 +111,7 @@ public sealed class DocumentEndpointsTests(ApiFactory factory)
     {
         var (client, _) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
 
-        var response = await UploadAsync(client, fileName, contentType, Encoding.UTF8.GetBytes(content));
+        var response = await client.UploadDocumentAsync(fileName, contentType, Encoding.UTF8.GetBytes(content));
 
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await response.Content.ReadFromJsonAsync<ValidationProblemDetails>(CancellationToken))!.Errors.ShouldNotBeEmpty();
@@ -128,12 +122,12 @@ public sealed class DocumentEndpointsTests(ApiFactory factory)
     {
         var (owner, _) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
         var (stranger, _) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
-        var document = await ReadAsync<DocumentSummary>(await UploadAsync(owner, "private.txt", "text/plain", _textContent));
+        var document = await (await owner.UploadDocumentAsync("private.txt", "text/plain", _textContent)).ReadAsync<DocumentSummary>();
 
         (await stranger.GetAsync($"/api/documents/{document.Id}", CancellationToken)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
         (await stranger.GetAsync($"/api/documents/{document.Id}/download", CancellationToken)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
         (await stranger.DeleteAsync($"/api/documents/{document.Id}", CancellationToken)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
-        (await ReadAsync<PagedResponse<DocumentSummary>>(await stranger.GetAsync("/api/documents", CancellationToken))).TotalCount.ShouldBe(0);
+        (await stranger.GetAsync<PagedResponse<DocumentSummary>>("/api/documents")).TotalCount.ShouldBe(0);
 
         (await owner.GetAsync($"/api/documents/{document.Id}", CancellationToken)).StatusCode.ShouldBe(HttpStatusCode.OK);
     }
@@ -157,7 +151,7 @@ public sealed class DocumentEndpointsTests(ApiFactory factory)
         var (client, userId) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
         var documentId = await SeedCompletedDocumentAsync(userId);
 
-        var details = await ReadAsync<DocumentDetailsResponse>(await client.GetAsync($"/api/documents/{documentId}", CancellationToken));
+        var details = await client.GetAsync<DocumentDetailsResponse>($"/api/documents/{documentId}");
 
         details.Status.ShouldBe(DocumentStatus.Completed);
         details.ProcessedAt.ShouldNotBeNull();
@@ -175,7 +169,7 @@ public sealed class DocumentEndpointsTests(ApiFactory factory)
             NextBusinessDay: new DateOnly(2026, 11, 12)));
         analysis.ImportantDates[1].CalendarCheck.ShouldBeNull();
 
-        (await PublishedAsync<DocumentStatusChanged>(message => message.DocumentId == documentId && message.Status == "Completed"))
+        (await factory.PublishedAsync<DocumentStatusChanged>(message => message.DocumentId == documentId && message.Status == "Completed"))
             .ShouldBeTrue();
     }
 
@@ -214,27 +208,4 @@ public sealed class DocumentEndpointsTests(ApiFactory factory)
 
         return document.Id.Value;
     }
-
-    private static Task<HttpResponseMessage> UploadAsync(HttpClient client, string fileName, string contentType, byte[] content)
-    {
-        var file = new ByteArrayContent(content);
-        file.Headers.ContentType = MediaTypeHeaderValue.Parse(contentType);
-        var form = new MultipartFormDataContent { { file, "file", fileName } };
-
-        return client.PostAsync("/api/documents", form, CancellationToken);
-    }
-
-    private static async Task<T> ReadAsync<T>(HttpResponseMessage response)
-    {
-        response.IsSuccessStatusCode.ShouldBeTrue(await response.Content.ReadAsStringAsync(CancellationToken));
-        return (await response.Content.ReadFromJsonAsync<T>(_json, CancellationToken))!;
-    }
-
-    private Task<bool> PublishedAsync<T>(Func<T, bool> filter)
-        where T : class =>
-        factory.Services.GetTestHarness().Published.Any<T>(context => filter(context.Context.Message), CancellationToken);
-
-    private Task<bool> ConsumedAsync<T>(Func<T, bool> filter)
-        where T : class =>
-        factory.Services.GetTestHarness().Consumed.Any<T>(context => filter(context.Context.Message), CancellationToken);
 }

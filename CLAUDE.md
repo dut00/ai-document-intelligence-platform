@@ -11,9 +11,10 @@ cp .env.example .env                                  # once
 docker compose up -d                                  # Postgres, RabbitMQ, SeaweedFS (S3), Aspire Dashboard
 dotnet build DocumentIntelligence.slnx
 dotnet run --project src/DocumentIntelligence.Api     # http://localhost:5080, Scalar UI at /scalar
-dotnet run --project src/DocumentIntelligence.Worker
+dotnet run --project src/DocumentIntelligence.Worker # fake analyzer unless a Claude key is set (below)
 dotnet test --solution DocumentIntelligence.slnx
 dotnet test --project tests/DocumentIntelligence.UnitTests --filter-class "*LayerDependencyTests"
+dotnet user-secrets set Anthropic:ApiKey <key> --project src/DocumentIntelligence.Worker  # or ANTHROPIC_API_KEY
 ```
 
 Migrations (`dotnet-ef` is a local tool: run `dotnet tool restore` once); the API applies them on startup in Development:

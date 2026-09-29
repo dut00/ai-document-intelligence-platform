@@ -1,5 +1,6 @@
 using DocumentIntelligence.Application.Abstractions.Behaviors;
 using DocumentIntelligence.Application.Abstractions.Messaging;
+using DocumentIntelligence.Application.Documents.Processing;
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -35,6 +36,8 @@ public static class DependencyInjection
         services.Decorate(typeof(IQueryHandler<,>), typeof(LoggingDecorator.QueryHandler<,>));
 
         services.AddValidatorsFromAssembly(assembly, includeInternalTypes: true);
+
+        services.AddScoped<IDateInsightsService, DateInsightsService>();
 
         return services;
     }

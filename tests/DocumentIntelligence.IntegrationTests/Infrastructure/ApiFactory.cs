@@ -1,17 +1,23 @@
 extern alias worker;
 
+using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using DocumentIntelligence.Api.Endpoints;
+using DocumentIntelligence.Application.Abstractions.Analysis;
+using DocumentIntelligence.Application.Abstractions.Calendar;
 using DocumentIntelligence.Application.Authentication;
 using DocumentIntelligence.Domain.Users;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using MassTransit;
+using MassTransit.Testing;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 using Testcontainers.PostgreSql;
 using worker::DocumentIntelligence.Worker.Consumers;
 
@@ -23,14 +29,22 @@ namespace DocumentIntelligence.IntegrationTests.Infrastructure;
 /// Runs the API in memory against throwaway PostgreSQL and SeaweedFS containers, shared by all tests
 /// in the assembly. RabbitMQ is replaced by MassTransit's in-memory test harness, which also hosts the
 /// Worker's consumers. Migrations are applied on startup because the host runs in the Development environment.
+/// Documents are analyzed by the fake analyzer, and public holidays come from <see cref="StubPublicHolidayProvider"/>.
 /// </summary>
 public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
     public const string Password = "Password123";
 
+    /// <summary>
+    /// Retries per message in tests: a failing message faults after this many attempts plus one.
+    /// </summary>
+    public const int MessageRetryLimit = 2;
+
     private const int S3Port = 8333;
     private const string S3AccessKey = "test-access-key";
     private const string S3SecretKey = "test-secret-key";
+
+    private static readonly TimeSpan _messageTimeout = TimeSpan.FromSeconds(15);
 
     private static readonly string _s3Config = $$"""
         {
@@ -92,6 +106,42 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         return (client, new UserId(user!.Id));
     }
 
+    /// <summary>
+    /// Waits until a matching message is published, or gives up after <see cref="_messageTimeout"/>.
+    /// </summary>
+    public Task<bool> PublishedAsync<T>(Func<T, bool> filter)
+        where T : class =>
+        EventuallyAsync(cancellationToken =>
+            Services.GetTestHarness().Published.Any<T>(context => filter(context.Context.Message), cancellationToken));
+
+    /// <summary>
+    /// Waits until a matching message is consumed, or gives up after <see cref="_messageTimeout"/>.
+    /// </summary>
+    public Task<bool> ConsumedAsync<T>(Func<T, bool> filter)
+        where T : class =>
+        EventuallyAsync(cancellationToken =>
+            Services.GetTestHarness().Consumed.Any<T>(context => filter(context.Context.Message), cancellationToken));
+
+    // The harness stops waiting once the bus looks idle, but messages a consumer's outbox delivers after
+    // its commit do not count as bus activity, so a single check can miss them.
+    private static async Task<bool> EventuallyAsync(Func<CancellationToken, Task<bool>> check)
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var started = Stopwatch.GetTimestamp();
+
+        while (!await check(cancellationToken))
+        {
+            if (Stopwatch.GetElapsedTime(started) > _messageTimeout)
+            {
+                return false;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+        }
+
+        return true;
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
@@ -104,12 +154,28 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Jwt:SigningKey", "integration-test-signing-key-at-least-32-characters");
         builder.UseSetting("OTEL_EXPORTER_OTLP_ENDPOINT", string.Empty);
 
-        builder.ConfigureTestServices(services => services.AddMassTransitTestHarness(bus =>
-        {
-            bus.AddConsumer<DocumentDeletedConsumer>();
+        // Never call Claude from tests, even when the machine has an API key configured.
+        builder.UseSetting("Anthropic:ApiKey", string.Empty);
+        builder.UseSetting("ANTHROPIC_API_KEY", string.Empty);
 
-            // Outbox delivery polls in the background, so allow more than the default second of bus inactivity.
-            bus.SetTestTimeouts(testTimeout: TimeSpan.FromSeconds(30), testInactivityTimeout: TimeSpan.FromSeconds(10));
-        }));
+        builder.UseSetting("Messaging:Retry:RetryLimit", MessageRetryLimit.ToString(CultureInfo.InvariantCulture));
+        builder.UseSetting("Messaging:Retry:MinInterval", "00:00:00.050");
+        builder.UseSetting("Messaging:Retry:MaxInterval", "00:00:00.200");
+        builder.UseSetting("Messaging:Retry:IntervalDelta", "00:00:00.050");
+
+        builder.ConfigureTestServices(services =>
+        {
+            services.AddSingleton<IPublicHolidayProvider, StubPublicHolidayProvider>();
+            services.Decorate<IDocumentAnalyzer, TransientFailureAnalyzer>();
+
+            services.AddMassTransitTestHarness(bus =>
+            {
+                bus.AddWorkerConsumers();
+                bus.AddConsumer<DocumentStatusChangedProbe>();
+
+                // Outbox delivery polls in the background, so allow more than the default second of bus inactivity.
+                bus.SetTestTimeouts(testTimeout: TimeSpan.FromSeconds(30), testInactivityTimeout: TimeSpan.FromSeconds(10));
+            });
+        });
     }
 }

@@ -16,7 +16,7 @@ builder.AddServiceDefaults();
 builder.Services
     .AddApplication()
     .AddInfrastructure(builder.Configuration)
-    .AddIdentityAndTokens();
+    .AddJwtAuthentication();
 
 // Enums travel as names ("Completed"), which the frontend and the OpenAPI document can rely on.
 builder.Services.ConfigureHttpJsonOptions(options =>

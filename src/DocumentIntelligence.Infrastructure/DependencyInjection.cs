@@ -1,18 +1,25 @@
 using Amazon.Runtime;
 using Amazon.S3;
+using Anthropic;
+using Anthropic.Core;
+using DocumentIntelligence.Application.Abstractions.Analysis;
 using DocumentIntelligence.Application.Abstractions.Authentication;
+using DocumentIntelligence.Application.Abstractions.Calendar;
 using DocumentIntelligence.Application.Abstractions.Data;
 using DocumentIntelligence.Application.Abstractions.Messaging;
 using DocumentIntelligence.Application.Abstractions.Storage;
 using DocumentIntelligence.Domain.Abstractions;
 using DocumentIntelligence.Domain.Documents;
+using DocumentIntelligence.Infrastructure.Analysis;
 using DocumentIntelligence.Infrastructure.Authentication;
+using DocumentIntelligence.Infrastructure.Calendar;
 using DocumentIntelligence.Infrastructure.DomainEvents;
 using DocumentIntelligence.Infrastructure.Identity;
 using DocumentIntelligence.Infrastructure.Messaging;
 using DocumentIntelligence.Infrastructure.Persistence;
 using DocumentIntelligence.Infrastructure.Persistence.Repositories;
 using DocumentIntelligence.Infrastructure.Storage;
+using DocumentIntelligence.Infrastructure.TextExtraction;
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -30,7 +37,7 @@ public static class DependencyInjection
     public const string MessageBrokerConnectionName = "RabbitMq";
 
     /// <summary>
-    /// Adapters shared by the API and the Worker: persistence, object storage and messaging.
+    /// Adapters for every Application port, shared by the API and the Worker.
     /// Each host registers its own consumers through <paramref name="configureConsumers"/>.
     /// </summary>
     public static IServiceCollection AddInfrastructure(
@@ -41,36 +48,22 @@ public static class DependencyInjection
         services.TryAddSingleton(TimeProvider.System);
 
         services.AddPersistence(configuration);
+        services.AddUserAccounts();
         services.AddStorage();
+        services.AddDocumentAnalysis(configuration);
+        services.AddHolidayCalendar();
         services.AddMessaging(configuration, configureConsumers);
 
         return services;
     }
 
     /// <summary>
-    /// User accounts and JWT bearer authentication; needed only by the API.
+    /// JWT bearer authentication of incoming requests. Needed only by the API, which therefore
+    /// also validates the token settings on startup.
     /// </summary>
-    public static IServiceCollection AddIdentityAndTokens(this IServiceCollection services)
+    public static IServiceCollection AddJwtAuthentication(this IServiceCollection services)
     {
-        services
-            .AddIdentityCore<ApplicationUser>(options =>
-            {
-                options.User.RequireUniqueEmail = true;
-                options.Password.RequiredLength = 8;
-                options.Password.RequireNonAlphanumeric = false;
-                options.Lockout.MaxFailedAccessAttempts = 5;
-                options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
-            })
-            .AddEntityFrameworkStores<ApplicationDbContext>();
-
-        services.AddOptions<JwtOptions>()
-            .BindConfiguration(JwtOptions.SectionName)
-            .ValidateDataAnnotations()
-            .ValidateOnStart();
-
-        services.AddScoped<IUserAccountService, IdentityUserAccountService>();
-        services.AddScoped<IRefreshTokenStore, RefreshTokenStore>();
-        services.AddSingleton<IAccessTokenIssuer, JwtAccessTokenIssuer>();
+        services.AddOptions<JwtOptions>().ValidateOnStart();
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
         services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
@@ -111,6 +104,30 @@ public static class DependencyInjection
         services.AddScoped<IDocumentRepository, DocumentRepository>();
     }
 
+    // The Worker never resolves these ports, so it needs no JWT settings: the options are
+    // validated when first used, or on startup by AddJwtAuthentication.
+    private static void AddUserAccounts(this IServiceCollection services)
+    {
+        services
+            .AddIdentityCore<ApplicationUser>(options =>
+            {
+                options.User.RequireUniqueEmail = true;
+                options.Password.RequiredLength = 8;
+                options.Password.RequireNonAlphanumeric = false;
+                options.Lockout.MaxFailedAccessAttempts = 5;
+                options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+            })
+            .AddEntityFrameworkStores<ApplicationDbContext>();
+
+        services.AddOptions<JwtOptions>()
+            .BindConfiguration(JwtOptions.SectionName)
+            .ValidateDataAnnotations();
+
+        services.AddScoped<IUserAccountService, IdentityUserAccountService>();
+        services.AddScoped<IRefreshTokenStore, RefreshTokenStore>();
+        services.AddSingleton<IAccessTokenIssuer, JwtAccessTokenIssuer>();
+    }
+
     private static void AddStorage(this IServiceCollection services)
     {
         services.AddOptions<StorageOptions>()
@@ -139,6 +156,64 @@ public static class DependencyInjection
         services.AddHostedService<StorageBucketInitializer>();
     }
 
+    private static void AddDocumentAnalysis(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddSingleton<ITextExtractor, PdfTextExtractor>();
+        services.AddSingleton<ITextExtractor, PlainTextExtractor>();
+
+        var section = configuration.GetSection(AnthropicOptions.SectionName);
+        var apiKey = section[nameof(AnthropicOptions.ApiKey)] is { Length: > 0 } configuredKey
+            ? configuredKey
+            : configuration[AnthropicOptions.ApiKeyVariable];
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            services.AddSingleton<IDocumentAnalyzer, FakeDocumentAnalyzer>();
+            return;
+        }
+
+        services.AddOptions<AnthropicOptions>()
+            .Bind(section)
+            .Configure(options => options.ApiKey = apiKey)
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddSingleton<IAnthropicClient>(provider =>
+        {
+            var anthropic = provider.GetRequiredService<IOptions<AnthropicOptions>>().Value;
+
+            return new AnthropicClient(new ClientOptions
+            {
+                ApiKey = anthropic.ApiKey,
+                MaxRetries = anthropic.MaxRetries,
+                Timeout = anthropic.Timeout,
+            });
+        });
+
+        services.AddScoped<IDocumentAnalyzer, ClaudeDocumentAnalyzer>();
+    }
+
+    private static void AddHolidayCalendar(this IServiceCollection services)
+    {
+        services.AddOptions<HolidaysOptions>()
+            .BindConfiguration(HolidaysOptions.SectionName)
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddMemoryCache();
+
+        services
+            .AddHttpClient<IPublicHolidayProvider, NagerDateHolidayProvider>((provider, client) =>
+                client.BaseAddress = provider.GetRequiredService<IOptions<HolidaysOptions>>().Value.BaseUrl)
+            .AddStandardResilienceHandler(resilience =>
+            {
+                // Fail fast: without the calendar the dates are still saved, just without the check.
+                resilience.Retry.MaxRetryAttempts = 2;
+                resilience.AttemptTimeout.Timeout = TimeSpan.FromSeconds(5);
+                resilience.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(15);
+            });
+    }
+
     private static void AddMessaging(
         this IServiceCollection services,
         IConfiguration configuration,
@@ -148,6 +223,11 @@ public static class DependencyInjection
             ?? throw new InvalidOperationException($"Connection string '{MessageBrokerConnectionName}' is not configured.");
 
         services.AddScoped<IIntegrationEventPublisher, MassTransitIntegrationEventPublisher>();
+
+        services.AddOptions<MessageRetryOptions>()
+            .BindConfiguration(MessageRetryOptions.SectionName)
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
 
         services.AddMassTransit(bus =>
         {
@@ -159,6 +239,22 @@ public static class DependencyInjection
             {
                 outbox.UsePostgres();
                 outbox.UseBusOutbox();
+            });
+
+            // Every consumer endpoint: retry outside, the transactional inbox/outbox inside. Each attempt
+            // runs in its own transaction, and messages it publishes are sent only once it commits.
+            bus.AddConfigureEndpointsCallback((context, _, endpoint) =>
+            {
+                var retry = context.GetRequiredService<IOptions<MessageRetryOptions>>().Value;
+
+                endpoint.UseMessageRetry(policy =>
+                {
+                    policy.Exponential(retry.RetryLimit, retry.MinInterval, retry.MaxInterval, retry.IntervalDelta);
+
+                    // A broken invariant is a bug, not a glitch: another attempt would fail the same way.
+                    policy.Ignore<DomainException>();
+                });
+                endpoint.UseEntityFrameworkOutbox<ApplicationDbContext>(context);
             });
 
             configureConsumers?.Invoke(bus);

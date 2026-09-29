@@ -9,7 +9,7 @@ A full-stack, production-oriented portfolio project, published as a public GitHu
 - **Processing:** file in SeaweedFS, metadata in PostgreSQL, `DocumentUploaded` via outbox → RabbitMQ → Worker. Status flow `Pending → Processing → Completed | Failed`.
 - **AI analysis:** document type, summary, entities, important dates (type + meaning), financial info, risks. Claude via forced tool use + FluentValidation, one corrective retry. Fake analyzer when no API key.
 - **Date insights:** backend (not AI) checks weekends/holidays and the next business day via Nager.Date. An API failure does not fail the document ("Calendar check unavailable").
-- **Reliability:** retries, delayed redelivery, DLQ (`_error`), idempotency (inbox + `xmin` concurrency), permanent vs transient errors.
+- **Reliability:** exponential retries, DLQ (`_error`) with a `Fault<DocumentUploaded>` consumer, idempotency (inbox + `xmin` concurrency), permanent vs transient errors.
 - **Extras:** SignalR live status, rate limiting, health checks, Serilog, OpenTelemetry + Aspire Dashboard, GitHub Actions CI.
 
 ## Out of scope
