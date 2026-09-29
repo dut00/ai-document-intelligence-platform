@@ -57,3 +57,5 @@ Package versions go only in `Directory.Packages.props` (central package manageme
 ## Rule: verify before finishing
 
 After every change, run `dotnet build DocumentIntelligence.slnx` and `dotnet test --solution DocumentIntelligence.slnx`, and fix every error before finishing. Warnings are errors (`TreatWarningsAsErrors`, `EnforceCodeStyleInBuild`), so style violations fail the build too.
+
+Before every commit, run the `/verify` skill (`.claude/skills/verify/SKILL.md`): it builds, runs all tests, checks the working tree (line endings, stray files) and reports whether the change is ready to commit. Then run the `reviewer` agent (`.claude/agents/reviewer.md`) on the change: a read-only review of design, correctness, security and test gaps that the build cannot catch.
