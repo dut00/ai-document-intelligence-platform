@@ -9,9 +9,12 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Scalar.AspNetCore" />
+    <!-- Needed by `dotnet ef` when this project is the startup project. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\DocumentIntelligence.Application\DocumentIntelligence.Application.csproj" />
     <ProjectReference Include="..\DocumentIntelligence.Infrastructure\DocumentIntelligence.Infrastructure.csproj" />
     <ProjectReference Include="..\DocumentIntelligence.ServiceDefaults\DocumentIntelligence.ServiceDefaults.csproj" />
   </ItemGroup>

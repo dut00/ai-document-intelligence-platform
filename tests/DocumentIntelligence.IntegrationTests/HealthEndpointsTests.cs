@@ -1,10 +1,9 @@
 using System.Net;
-using Microsoft.AspNetCore.Mvc.Testing;
+using DocumentIntelligence.IntegrationTests.Infrastructure;
 
 namespace DocumentIntelligence.IntegrationTests;
 
-public sealed class HealthEndpointsTests(WebApplicationFactory<Program> factory)
-    : IClassFixture<WebApplicationFactory<Program>>
+public sealed class HealthEndpointsTests(ApiFactory factory)
 {
     [Theory]
     [InlineData("/health/live")]

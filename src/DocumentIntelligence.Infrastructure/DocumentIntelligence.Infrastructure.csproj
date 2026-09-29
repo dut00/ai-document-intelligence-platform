@@ -3,8 +3,22 @@
   <!-- Adapters: EF Core, Identity, JWT, S3 storage, MassTransit, Claude, Nager.Date, PdfPig. -->
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\DocumentIntelligence.Application\DocumentIntelligence.Application.csproj" />
     <ProjectReference Include="..\DocumentIntelligence.Contracts\DocumentIntelligence.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DocumentIntelligence.UnitTests" />
   </ItemGroup>
 
 </Project>

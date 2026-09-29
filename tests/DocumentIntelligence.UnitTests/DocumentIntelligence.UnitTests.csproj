@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\DocumentIntelligence.Domain\DocumentIntelligence.Domain.csproj" />
     <ProjectReference Include="..\..\src\DocumentIntelligence.Application\DocumentIntelligence.Application.csproj" />
     <ProjectReference Include="..\..\src\DocumentIntelligence.Infrastructure\DocumentIntelligence.Infrastructure.csproj" />

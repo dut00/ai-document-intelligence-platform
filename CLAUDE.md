@@ -16,7 +16,13 @@ dotnet test --solution DocumentIntelligence.slnx
 dotnet test --project tests/DocumentIntelligence.UnitTests --filter-class "*LayerDependencyTests"
 ```
 
-Tests run on Microsoft.Testing.Platform: use `--solution`/`--project` and `--filter-class`/`--filter-method`, not VSTest syntax.
+Migrations (`dotnet-ef` is a local tool: run `dotnet tool restore` once); the API applies them on startup in Development:
+
+```sh
+dotnet ef migrations add <Name> --project src/DocumentIntelligence.Infrastructure --startup-project src/DocumentIntelligence.Api --output-dir Persistence/Migrations
+```
+
+Integration tests need Docker running (Testcontainers starts Postgres). Tests run on Microsoft.Testing.Platform: use `--solution`/`--project` and `--filter-class`/`--filter-method`, not VSTest syntax.
 
 ## Structure
 
@@ -41,6 +47,9 @@ Enforced by `.editorconfig` (build errors):
 
 Not enforceable by the analyzer, follow by hand:
 - Test methods: `Subject_behavior_in_snake_case` (e.g. `Health_endpoint_returns_ok`).
+- One top-level type per file, named after the type. Two exceptions:
+  - a use-case file holds the command/query, its validator and its handler (e.g. `Application/Authentication/Login.cs`);
+  - an enum used only by one type may live in that type's file (e.g. `RiskSeverity` in `Risk.cs`). Once another type uses it, move it to its own file.
 
 Package versions go only in `Directory.Packages.props` (central package management rejects a `Version` on `PackageReference`).
 

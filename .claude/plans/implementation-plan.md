@@ -9,10 +9,10 @@ The project focuses on architecture, reliability (retries, DLQ, idempotency), AI
 - **Language:** all project files are in **English**: code, comments, README, `docs/`, commit messages, UI, plan files and everything under `.claude`. The user writes in Polish; memory and all saved files are in English.
 - **Architecture:** Clean Architecture + **DDD** + **CQRS**, with custom handlers (no MediatR).
   - **DDD (Domain):**
-    - Aggregates: `Document` is the root and owns `DocumentAnalysis` as an internal entity; `User` is the second aggregate.
+    - Aggregates: `Document` is the root and owns `DocumentAnalysis` as an internal entity. User accounts are owned by ASP.NET Core Identity (`ApplicationUser` in Infrastructure, behind the `IUserAccountService` port); the domain refers to users only by `UserId`, so there is no separate domain `User` class duplicating Identity.
     - Value objects: `DocumentId` and `UserId` (strongly-typed ids), `FileName`, `FileSize`, `ContentType` (PDF/TXT only), `StorageKey`, `Money` (Amount + Currency), `ImportantDate` (Date, Type, Description, `CalendarCheck?`), `CalendarCheck` (IsWeekend, HolidayName, NextBusinessDay) and `Risk`.
     - Rich model: `Document.Upload(...)`, `StartProcessing()`, `Complete(analysis)`, `Fail(reason)` and `MarkForDeletion()` enforce the allowed status transitions. Invalid transitions throw `DomainException`.
-    - Domain events: `DocumentUploadedDomainEvent`, `DocumentProcessingCompletedDomainEvent` and `DocumentProcessingFailedDomainEvent`. They are collected on the aggregate and dispatched by a `SaveChanges` interceptor. Their handlers publish integration events (Contracts) through the outbox.
+    - Domain events: `DocumentUploadedDomainEvent`, `DocumentProcessingCompletedDomainEvent`, `DocumentProcessingFailedDomainEvent` and `DocumentDeletedDomainEvent` (raised by `MarkForDeletion()`, carries the storage key for blob cleanup). They are collected on the aggregate and dispatched by a `SaveChanges` interceptor. Their handlers publish integration events (Contracts) through the outbox.
     - One repository per aggregate (`IDocumentRepository`) plus `IUnitOfWork`.
   - **CQRS:**
     - Commands (`RegisterUser`, `Login`, `RefreshToken`, `Logout`, `UploadDocument`, `DeleteDocument`, `ProcessDocument`) go through repositories and aggregates.
@@ -145,8 +145,8 @@ README.md
 ## Implementation order
 0. Housekeeping: save an English feedback memory ("all project files, plans and memory in English; user writes in Polish"), then copy this plan to `.claude/plans/implementation-plan.md` in the repo (committed; the source of truth from then on).
 1. Skeleton: solution, projects, CPM, `.gitignore`, docker-compose with the infrastructure, ServiceDefaults.
-2. Domain (aggregates, value objects, domain events), CQRS building blocks (handler interfaces, decorators, `Result`), Infrastructure (DbContext, Identity, migration), Auth (JWT, refresh, endpoints) and auth tests.
-3. Documents: `IFileStorage` (SeaweedFS), upload/list/details/download/delete/stats, outbox, and tests.
+2. Domain (aggregates, value objects, domain events), CQRS building blocks (handler interfaces, decorators, `Result`), Infrastructure (DbContext, Identity, migration), Auth (JWT, refresh, endpoints) and auth tests. Refresh-token rotation and reuse detection are tested end to end against Postgres (they rely on `xmin`), not with unit tests.
+3. Documents: EF mapping of `Document`/`DocumentAnalysis` and its migration, domain event dispatch interceptor, `IFileStorage` (SeaweedFS), upload/list/details/download/delete/stats, outbox, and tests.
 4. Worker: consumer, text extraction, `IDocumentAnalyzer` (Claude + Fake), validation, Nager.Date date insights, retry/DLQ/Fault, and tests.
 5. SignalR, rate limiting, health checks, OpenTelemetry with the Aspire Dashboard.
 6. Frontend: auth flow, dashboard, upload, list, details, SignalR.
