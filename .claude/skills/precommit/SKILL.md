@@ -1,10 +1,10 @@
 ---
-name: verify
-description: Build the solution, run all unit and integration tests, and check the working tree before a commit. Use before every commit, and whenever the user asks to verify, test or check the application.
+name: precommit
+description: Build the solution, run all unit and integration tests, and check the working tree before a commit. Use before every commit, and whenever the user asks to check the build and tests before committing.
 context: fork
 ---
 
-# Verify before commit
+# Pre-commit check
 
 Run the steps in order and stop at the first step that cannot be fixed. Do not commit, stage or push anything: this skill only verifies. Do not kill processes you did not start (the user often runs the API from Visual Studio).
 

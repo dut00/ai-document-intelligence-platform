@@ -8,6 +8,7 @@ using DocumentIntelligence.Domain.Documents;
 using DocumentIntelligence.Domain.Documents.Analysis;
 using DocumentIntelligence.Domain.Documents.Events;
 using DocumentIntelligence.Domain.Users;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
@@ -15,7 +16,7 @@ using NSubstitute.ExceptionExtensions;
 
 namespace DocumentIntelligence.UnitTests.Application;
 
-public sealed class ProcessDocumentCommandHandlerTests
+public sealed class ProcessDocumentCommandHandlerTests : IDisposable
 {
     private const string DocumentText = "Invoice 7/2026. Payment due 2026-11-11.";
 
@@ -26,6 +27,9 @@ public sealed class ProcessDocumentCommandHandlerTests
     private readonly ITextExtractor _extractor = Substitute.For<ITextExtractor>();
     private readonly IDocumentAnalyzer _analyzer = Substitute.For<IDocumentAnalyzer>();
     private readonly IPublicHolidayProvider _holidays = Substitute.For<IPublicHolidayProvider>();
+    private readonly TestMeterFactory _meterFactory = new();
+    private readonly MetricCollector<long> _processed;
+    private readonly MetricCollector<double> _analysisDuration;
     private readonly ProcessDocumentCommandHandler _handler;
 
     public ProcessDocumentCommandHandlerTests()
@@ -39,6 +43,9 @@ public sealed class ProcessDocumentCommandHandlerTests
         _holidays.GetPublicHolidaysAsync(2026, Arg.Any<CancellationToken>())
             .Returns([new PublicHoliday(new DateOnly(2026, 11, 11), "National Independence Day")]);
 
+        _processed = new MetricCollector<long>(_meterFactory, DocumentProcessingMetrics.MeterName, "documents.processed");
+        _analysisDuration = new MetricCollector<double>(_meterFactory, DocumentProcessingMetrics.MeterName, "ai.analysis.duration");
+
         _handler = new ProcessDocumentCommandHandler(
             _documents,
             _unitOfWork,
@@ -47,10 +54,18 @@ public sealed class ProcessDocumentCommandHandlerTests
             _analyzer,
             new DateInsightsService(_holidays, NullLogger<DateInsightsService>.Instance),
             _time,
+            new DocumentProcessingMetrics(_meterFactory),
             NullLogger<ProcessDocumentCommandHandler>.Instance);
     }
 
     private static CancellationToken CancellationToken => TestContext.Current.CancellationToken;
+
+    public void Dispose()
+    {
+        _processed.Dispose();
+        _analysisDuration.Dispose();
+        _meterFactory.Dispose();
+    }
 
     [Fact]
     public async Task Pending_document_is_analyzed_and_completed()
@@ -183,6 +198,41 @@ public sealed class ProcessDocumentCommandHandlerTests
 
         document.Status.ShouldNotBe(DocumentStatus.Failed);
         await _unitOfWork.DidNotReceiveWithAnyArgs().SaveChangesAsync(CancellationToken);
+    }
+
+    [Fact]
+    public async Task Metrics_count_the_completed_document_and_time_the_analysis()
+    {
+        await ProcessAsync(Stored(PendingDocument()));
+
+        _processed.GetMeasurementSnapshot().ShouldHaveSingleItem().Tags["outcome"].ShouldBe("completed");
+        var analysis = _analysisDuration.GetMeasurementSnapshot().ShouldHaveSingleItem();
+        analysis.Tags["model"].ShouldBe("test-model");
+        analysis.Tags["outcome"].ShouldBe("success");
+    }
+
+    [Fact]
+    public async Task Metrics_count_a_document_the_ai_cannot_analyze_as_failed()
+    {
+        _analyzer.AnalyzeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new UnprocessableDocumentException("The AI declined to analyze the document."));
+
+        await ProcessAsync(Stored(PendingDocument()));
+
+        _processed.GetMeasurementSnapshot().ShouldHaveSingleItem().Tags["outcome"].ShouldBe("failed");
+        _analysisDuration.GetMeasurementSnapshot().ShouldHaveSingleItem().Tags["outcome"].ShouldBe("invalid");
+    }
+
+    [Fact]
+    public async Task Metrics_do_not_count_a_transient_failure_as_processed()
+    {
+        _analyzer.AnalyzeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new HttpRequestException("529 Overloaded"));
+
+        await Should.ThrowAsync<HttpRequestException>(() => ProcessAsync(Stored(PendingDocument())));
+
+        _processed.GetMeasurementSnapshot().ShouldBeEmpty();
+        _analysisDuration.GetMeasurementSnapshot().ShouldHaveSingleItem().Tags["outcome"].ShouldBe("error");
     }
 
     [Fact]

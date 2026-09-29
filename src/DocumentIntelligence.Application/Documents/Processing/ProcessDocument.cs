@@ -29,6 +29,7 @@ internal sealed partial class ProcessDocumentCommandHandler(
     IDocumentAnalyzer analyzer,
     IDateInsightsService dateInsights,
     TimeProvider timeProvider,
+    DocumentProcessingMetrics metrics,
     ILogger<ProcessDocumentCommandHandler> logger)
     : ICommandHandler<ProcessDocumentCommand, ProcessingOutcome>
 {
@@ -66,7 +67,7 @@ internal sealed partial class ProcessDocumentCommandHandler(
         try
         {
             var text = await ExtractTextAsync(document, cancellationToken);
-            var result = await analyzer.AnalyzeAsync(text, cancellationToken);
+            var result = await AnalyzeAsync(text, cancellationToken);
             analysis = await CreateAnalysisAsync(document.Id, result, cancellationToken);
         }
         catch (UnprocessableDocumentException exception)
@@ -74,12 +75,14 @@ internal sealed partial class ProcessDocumentCommandHandler(
             LogUnprocessable(logger, exception, document.Id, exception.Message);
             document.Fail(exception.Message, timeProvider.GetUtcNow());
             await unitOfWork.SaveChangesAsync(cancellationToken);
+            metrics.DocumentProcessed(ProcessingOutcome.Failed);
 
             return ProcessingOutcome.Failed;
         }
 
         document.Complete(analysis, timeProvider.GetUtcNow());
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        metrics.DocumentProcessed(ProcessingOutcome.Completed);
 
         return ProcessingOutcome.Completed;
     }
@@ -109,6 +112,28 @@ internal sealed partial class ProcessDocumentCommandHandler(
         }
 
         return text;
+    }
+
+    private async Task<AnalysisResult> AnalyzeAsync(string text, CancellationToken cancellationToken)
+    {
+        var started = timeProvider.GetTimestamp();
+        var outcome = "error";
+
+        try
+        {
+            var result = await analyzer.AnalyzeAsync(text, cancellationToken);
+            outcome = "success";
+            return result;
+        }
+        catch (UnprocessableDocumentException)
+        {
+            outcome = "invalid";
+            throw;
+        }
+        finally
+        {
+            metrics.AnalysisFinished(analyzer.Model, outcome, timeProvider.GetElapsedTime(started));
+        }
     }
 
     // The result has passed AnalysisResultValidator, so parsing cannot fail here.

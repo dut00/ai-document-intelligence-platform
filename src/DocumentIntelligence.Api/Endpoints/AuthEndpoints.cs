@@ -1,5 +1,6 @@
 using DocumentIntelligence.Api.Authentication;
 using DocumentIntelligence.Api.Extensions;
+using DocumentIntelligence.Api.RateLimiting;
 using DocumentIntelligence.Application.Abstractions.Messaging;
 using DocumentIntelligence.Application.Abstractions.Results;
 using DocumentIntelligence.Application.Authentication;
@@ -14,23 +15,31 @@ internal static class AuthEndpoints
 
         group.MapPost("/register", RegisterAsync)
             .AllowAnonymous()
+            .RequireRateLimiting(RateLimitingExtensions.AuthPolicy)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .Produces<UserResponse>(StatusCodes.Status201Created)
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status409Conflict);
 
         group.MapPost("/login", LoginAsync)
             .AllowAnonymous()
+            .RequireRateLimiting(RateLimitingExtensions.AuthPolicy)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .Produces<AccessTokenResponse>()
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status401Unauthorized);
 
         group.MapPost("/refresh", RefreshAsync)
             .AllowAnonymous()
+            .RequireRateLimiting(RateLimitingExtensions.AuthPolicy)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .Produces<AccessTokenResponse>()
             .ProducesProblem(StatusCodes.Status401Unauthorized);
 
         group.MapPost("/logout", LogoutAsync)
             .AllowAnonymous()
+            .RequireRateLimiting(RateLimitingExtensions.AuthPolicy)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .Produces(StatusCodes.Status204NoContent);
 
         group.MapGet("/me", GetCurrentUserAsync)

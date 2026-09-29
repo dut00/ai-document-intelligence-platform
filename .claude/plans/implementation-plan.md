@@ -89,7 +89,12 @@ README.md
    - Once retries are exhausted, a `Fault<DocumentUploaded>` consumer sets `Failed` and the message lands in the `_error` queue (DLQ).
    - Permanent errors (no text, unsupported file) fail the document immediately, without retries.
 4. **Worker crash:** the attempt's transaction rolls back, so the document is still `Pending`, and RabbitMQ redelivers the unacked message. (The domain can also reclaim a document stuck in `Processing` once its last update is older than a timeout.)
-5. **Real-time:** the API consumes `DocumentStatusChanged` and pushes it through `DocumentsHub` to the `user:{id}` group. The hub reads the JWT from the query string. The UI invalidates the affected TanStack Query queries.
+5. **Real-time:** the API consumes `DocumentStatusChanged` and pushes it through `DocumentsHub` (`/hubs/documents`) to the `user:{id}` group. The UI invalidates the affected TanStack Query queries.
+   - Only final statuses (`Completed`, `Failed`) are pushed: `Processing` is never committed on its own (see 2), so the UI shows a pending document as "in progress".
+   - Each API instance holds its own connections, so the notifier consumer gets a queue per instance (MassTransit temporary endpoint: exclusive, removed when the instance stops) instead of competing with the other instances. No SignalR backplane is needed.
+   - The notifier touches no database, so its endpoint (named `notify-…`, see `NotificationEndpoints`) skips the inbox/outbox and retries, and discards a faulted message: a missed push only delays the UI until its next refetch, and no orphaned `_error` queue is left per instance.
+   - Browsers cannot send headers on a WebSocket, so the hub also accepts the JWT from the `access_token` query parameter, on the hub path only. Request logs record the path without the query string.
+   - The hub closes a connection when its access token expires (`CloseOnAuthenticationExpiration`), so a leaked token or a logout does not keep the stream open; the client reconnects with a fresh token.
 
 ## API (Minimal API, OpenAPI + Scalar)
 - `POST /api/auth/register | login | refresh | logout`, `GET /api/auth/me`
@@ -97,8 +102,8 @@ README.md
 - Ownership checks live in the handlers: queries are filtered by `OwnerId`, and another user's document returns **404** so its existence is not leaked.
 - OpenAPI document (`Microsoft.AspNetCore.OpenApi`) with the **Scalar UI** at `/scalar` for browsing and trying the API, including a JWT bearer security scheme. Enabled in Development and in the `full` Docker profile.
 - ProblemDetails and a global exception handler.
-- Rate limiting: fixed window on auth, token bucket on upload.
-- Health checks: `/health/live` and `/health/ready` (Postgres, RabbitMQ, SeaweedFS).
+- Rate limiting (`RateLimiting` options): fixed window per client IP on the anonymous auth endpoints (20/min), token bucket per user on upload (burst of 10, then 2/min). Rejections are 429 ProblemDetails with `Retry-After`.
+- Health checks with a JSON report per check: `/health/live` (the process only) and `/health/ready` (Postgres via the DbContext, RabbitMQ via MassTransit's bus check, SeaweedFS by listing the bucket).
 - A 10 MB upload limit in Kestrel/FormOptions, plus validation in the handler.
 
 ## Frontend (`frontend/`)
@@ -116,8 +121,8 @@ README.md
 `ServiceDefaults.AddServiceDefaults()` sets up:
 - Serilog: console output, JSON format, TraceId enrichment.
 - OpenTelemetry traces, metrics and logs sent over OTLP to the Aspire Dashboard (`:18888`).
-- Instrumentation for ASP.NET Core, HttpClient, EF Core/Npgsql and MassTransit (`MassTransit` ActivitySource).
-- Custom metrics: `documents.processed`, `ai.analysis.duration`.
+- Instrumentation for ASP.NET Core and HttpClient (which covers the Claude, Nager.Date and S3 calls), plus the sources Npgsql and MassTransit emit natively (`Npgsql`, `MassTransit`; no extra packages).
+- Custom metrics (meter `DocumentIntelligence.Processing`): `documents.processed` (by outcome) and `ai.analysis.duration` (by model and outcome).
 
 ## Docker
 - `docker-compose.yml` runs postgres:17, rabbitmq:4-management, chrislusf/seaweedfs (S3 API, credentials in `docker/seaweedfs/s3.json`; the app creates the bucket on startup) and aspire-dashboard.
@@ -125,6 +130,7 @@ README.md
 - Multi-stage Dockerfiles live in `src/…Api`, `src/…Worker` and `frontend`.
 - Config comes from `.env` (copied from `.env.example`). Local secrets live in `dotnet user-secrets` or `.env`.
 - The API applies migrations on startup in Development.
+- Behind nginx every request comes from the proxy's address, so the API must use forwarded headers (trusting only the proxy) before the per-IP auth rate limit means anything.
 
 ## Tests
 - **Unit:**
@@ -141,6 +147,9 @@ README.md
   - Auth: register → login → refresh → logout.
   - Authorization: 401 without a token, and user B gets 404 for user A's document.
   - Processing: upload → worker (in-process MassTransit, fake analyzer, stubbed holidays) → `Completed` → GET analysis → download → delete; a PDF without text → `Failed`; transient errors → retries → `Fault` → `Failed`.
+  - SignalR: the owner (and nobody else) is notified over a WebSocket with the token in the query string; no token → 401; the query-string token is ignored outside the hub.
+  - Rate limiting: auth per client IP (the test server assigns each request a random IP unless a test pins one), upload per user.
+  - Health: readiness reports Postgres, storage and the bus; liveness depends on nothing external.
 - **CI** (`.github/workflows/ci.yml`): `dotnet build/test` (Testcontainers runs on ubuntu-latest) and `npm ci && npm run lint && npm run build` for the frontend.
 
 ## Implementation order
@@ -167,7 +176,7 @@ Commit to `master` after each step.
 - Run `docker compose up -d`, then `dotnet run` for the Api and the Worker, and `npm run dev` in `frontend/`.
 - End-to-end in the browser:
   - Register, log in and upload a PDF/TXT.
-  - Status updates live: Pending → Processing → Completed.
+  - Status updates live: Pending → Completed (or Failed) without a refresh.
   - Details show the analysis and calendar badges, e.g. a contract deadline on 11 Nov shows "Public holiday: National Independence Day".
   - Download, then delete.
 - Without an Anthropic key the fake analyzer runs. With a key, real Claude responds.

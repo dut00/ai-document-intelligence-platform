@@ -20,7 +20,8 @@ public sealed class FailDocumentProcessingCommandValidator : AbstractValidator<F
 internal sealed class FailDocumentProcessingCommandHandler(
     IDocumentRepository documents,
     IUnitOfWork unitOfWork,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    DocumentProcessingMetrics metrics)
     : ICommandHandler<FailDocumentProcessingCommand, ProcessingOutcome>
 {
     public async Task<Result<ProcessingOutcome>> HandleAsync(FailDocumentProcessingCommand command, CancellationToken cancellationToken)
@@ -33,6 +34,7 @@ internal sealed class FailDocumentProcessingCommandHandler(
 
         document.Fail(command.Reason, timeProvider.GetUtcNow());
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        metrics.DocumentProcessed(ProcessingOutcome.Failed);
 
         return ProcessingOutcome.Failed;
     }

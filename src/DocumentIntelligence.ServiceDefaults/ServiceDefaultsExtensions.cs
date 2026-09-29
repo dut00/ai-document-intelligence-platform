@@ -23,6 +23,10 @@ public static class ServiceDefaultsExtensions
 
     private const string OtlpEndpointKey = "OTEL_EXPORTER_OTLP_ENDPOINT";
 
+    // Telemetry of this solution (DocumentIntelligence.Api, DocumentIntelligence.Processing, ...) and of the
+    // libraries that emit it natively: no instrumentation package is needed for these.
+    private static readonly string[] _telemetrySources = ["DocumentIntelligence.*", "MassTransit", "Npgsql"];
+
     public static TBuilder AddServiceDefaults<TBuilder>(this TBuilder builder)
         where TBuilder : IHostApplicationBuilder
     {
@@ -39,8 +43,12 @@ public static class ServiceDefaultsExtensions
         app.MapHealthChecks("/health/live", new HealthCheckOptions
         {
             Predicate = registration => registration.Tags.Contains(LiveTag),
+            ResponseWriter = WriteHealthReportAsync,
         });
-        app.MapHealthChecks("/health/ready");
+        app.MapHealthChecks("/health/ready", new HealthCheckOptions
+        {
+            ResponseWriter = WriteHealthReportAsync,
+        });
 
         return app;
     }
@@ -71,12 +79,12 @@ public static class ServiceDefaultsExtensions
         var openTelemetry = builder.Services.AddOpenTelemetry()
             .ConfigureResource(resource => resource.AddService(builder.Environment.ApplicationName))
             .WithMetrics(metrics => metrics
-                .AddMeter(builder.Environment.ApplicationName)
+                .AddMeter(_telemetrySources)
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation())
             .WithTracing(tracing => tracing
-                .AddSource(builder.Environment.ApplicationName)
+                .AddSource(_telemetrySources)
                 .AddAspNetCoreInstrumentation(options => options.Filter = IsNotHealthCheck)
                 .AddHttpClientInstrumentation());
 
@@ -90,6 +98,21 @@ public static class ServiceDefaultsExtensions
     private static void AddDefaultHealthChecks(this IHostApplicationBuilder builder) =>
         builder.Services.AddHealthChecks()
             .AddCheck("self", () => HealthCheckResult.Healthy(), [LiveTag]);
+
+    // One entry per check, e.g. to see which dependency makes the service not ready. Exceptions are left out.
+    private static Task WriteHealthReportAsync(HttpContext context, HealthReport report) =>
+        context.Response.WriteAsJsonAsync(new
+        {
+            status = report.Status.ToString(),
+            duration = report.TotalDuration,
+            checks = report.Entries.Select(entry => new
+            {
+                name = entry.Key,
+                status = entry.Value.Status.ToString(),
+                duration = entry.Value.Duration,
+                description = entry.Value.Description,
+            }),
+        });
 
     private static bool IsNotHealthCheck(HttpContext context) =>
         !context.Request.Path.StartsWithSegments("/health");

@@ -37,6 +37,11 @@ public static class DependencyInjection
     public const string MessageBrokerConnectionName = "RabbitMq";
 
     /// <summary>
+    /// Tag of the health checks of external dependencies (the message broker's check has it too).
+    /// </summary>
+    public const string ReadyTag = "ready";
+
+    /// <summary>
     /// Adapters for every Application port, shared by the API and the Worker.
     /// Each host registers its own consumers through <paramref name="configureConsumers"/>.
     /// </summary>
@@ -102,6 +107,8 @@ public static class DependencyInjection
         services.AddScoped<IUnitOfWork>(provider => provider.GetRequiredService<ApplicationDbContext>());
         services.AddScoped<IReadDbContext>(provider => provider.GetRequiredService<ApplicationDbContext>());
         services.AddScoped<IDocumentRepository, DocumentRepository>();
+
+        services.AddHealthChecks().AddDbContextCheck<ApplicationDbContext>("postgres", tags: [ReadyTag]);
     }
 
     // The Worker never resolves these ports, so it needs no JWT settings: the options are
@@ -154,6 +161,8 @@ public static class DependencyInjection
 
         services.AddSingleton<IFileStorage, S3FileStorage>();
         services.AddHostedService<StorageBucketInitializer>();
+
+        services.AddHealthChecks().AddCheck<StorageHealthCheck>("storage", tags: [ReadyTag], timeout: TimeSpan.FromSeconds(5));
     }
 
     private static void AddDocumentAnalysis(this IServiceCollection services, IConfiguration configuration)
@@ -243,8 +252,14 @@ public static class DependencyInjection
 
             // Every consumer endpoint: retry outside, the transactional inbox/outbox inside. Each attempt
             // runs in its own transaction, and messages it publishes are sent only once it commits.
-            bus.AddConfigureEndpointsCallback((context, _, endpoint) =>
+            bus.AddConfigureEndpointsCallback((context, name, endpoint) =>
             {
+                if (NotificationEndpoints.IsNotificationEndpoint(name))
+                {
+                    endpoint.DiscardFaultedMessages();
+                    return;
+                }
+
                 var retry = context.GetRequiredService<IOptions<MessageRetryOptions>>().Value;
 
                 endpoint.UseMessageRetry(policy =>

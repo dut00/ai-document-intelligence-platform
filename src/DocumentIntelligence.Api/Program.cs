@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Text.Json.Serialization;
 using DocumentIntelligence.Api.Endpoints;
 using DocumentIntelligence.Api.OpenApi;
+using DocumentIntelligence.Api.RateLimiting;
+using DocumentIntelligence.Api.Realtime;
 using DocumentIntelligence.Application;
 using DocumentIntelligence.Infrastructure;
 using DocumentIntelligence.Infrastructure.Persistence;
@@ -15,8 +17,10 @@ builder.AddServiceDefaults();
 
 builder.Services
     .AddApplication()
-    .AddInfrastructure(builder.Configuration)
-    .AddJwtAuthentication();
+    .AddInfrastructure(builder.Configuration, bus => bus.AddRealtimeConsumers())
+    .AddJwtAuthentication()
+    .AddRealtime()
+    .AddApiRateLimiting();
 
 // Enums travel as names ("Completed"), which the frontend and the OpenAPI document can rely on.
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -36,6 +40,7 @@ app.UseStatusCodePages();
 app.UseSerilogRequestLogging();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 // OpenAPI + Scalar UI (/scalar): on in Development, opt-in elsewhere via OpenApi:Enabled.
 if (app.Configuration.GetValue("OpenApi:Enabled", app.Environment.IsDevelopment()))
@@ -47,6 +52,9 @@ if (app.Configuration.GetValue("OpenApi:Enabled", app.Environment.IsDevelopment(
 app.MapDefaultEndpoints();
 app.MapAuthEndpoints();
 app.MapDocumentEndpoints();
+// Close the connection when its access token expires, so a leaked token or a logout does not keep
+// the stream open; the client reconnects with a fresh token.
+app.MapHub<DocumentsHub>(DocumentsHub.Path, options => options.CloseOnAuthenticationExpiration = true);
 
 if (app.Configuration.GetValue("Database:MigrateOnStartup", app.Environment.IsDevelopment()))
 {

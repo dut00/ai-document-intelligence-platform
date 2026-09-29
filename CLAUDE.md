@@ -8,9 +8,9 @@ Design decisions and implementation order: `.claude/plans/implementation-plan.md
 
 ```sh
 cp .env.example .env                                  # once
-docker compose up -d                                  # Postgres, RabbitMQ, SeaweedFS (S3), Aspire Dashboard
+docker compose up -d                                  # Postgres, RabbitMQ (UI :15672), SeaweedFS (S3), Aspire Dashboard (:18888)
 dotnet build DocumentIntelligence.slnx
-dotnet run --project src/DocumentIntelligence.Api     # http://localhost:5080, Scalar UI at /scalar
+dotnet run --project src/DocumentIntelligence.Api     # http://localhost:5080: Scalar UI /scalar, hub /hubs/documents, /health/ready
 dotnet run --project src/DocumentIntelligence.Worker # fake analyzer unless a Claude key is set (below)
 dotnet test --solution DocumentIntelligence.slnx
 dotnet test --project tests/DocumentIntelligence.UnitTests --filter-class "*LayerDependencyTests"
@@ -58,4 +58,4 @@ Package versions go only in `Directory.Packages.props` (central package manageme
 
 After every change, run `dotnet build DocumentIntelligence.slnx` and `dotnet test --solution DocumentIntelligence.slnx`, and fix every error before finishing. Warnings are errors (`TreatWarningsAsErrors`, `EnforceCodeStyleInBuild`), so style violations fail the build too.
 
-Before every commit, run the `/verify` skill (`.claude/skills/verify/SKILL.md`): it builds, runs all tests, checks the working tree (line endings, stray files) and reports whether the change is ready to commit. Then run the `reviewer` agent (`.claude/agents/reviewer.md`) on the change: a read-only review of design, correctness, security and test gaps that the build cannot catch.
+Before every commit, run the `/precommit` skill (`.claude/skills/precommit/SKILL.md`; not the built-in `/verify`, which checks a running app instead): it builds, runs all tests, checks the working tree (line endings, stray files) and reports whether the change is ready to commit. Then run the `reviewer` agent (`.claude/agents/reviewer.md`) on the change: a read-only review of design, correctness, security and test gaps that the build cannot catch.

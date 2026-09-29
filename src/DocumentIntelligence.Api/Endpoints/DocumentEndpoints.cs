@@ -1,4 +1,5 @@
 using DocumentIntelligence.Api.Extensions;
+using DocumentIntelligence.Api.RateLimiting;
 using DocumentIntelligence.Application.Abstractions.Messaging;
 using DocumentIntelligence.Application.Abstractions.Paging;
 using DocumentIntelligence.Application.Abstractions.Results;
@@ -26,6 +27,8 @@ internal static class DocumentEndpoints
             .Produces<DocumentSummary>(StatusCodes.Status202Accepted)
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
+            .RequireRateLimiting(RateLimitingExtensions.UploadPolicy)
             .WithMetadata(new RequestSizeLimitAttribute(MaxUploadRequestBytes))
             .WithFormOptions(multipartBodyLengthLimit: MaxUploadRequestBytes)
             // Authentication uses a bearer token, not cookies, so there is no CSRF risk to guard against.

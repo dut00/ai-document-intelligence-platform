@@ -38,6 +38,7 @@ public static class DependencyInjection
         services.AddValidatorsFromAssembly(assembly, includeInternalTypes: true);
 
         services.AddScoped<IDateInsightsService, DateInsightsService>();
+        services.AddSingleton<DocumentProcessingMetrics>();
 
         return services;
     }

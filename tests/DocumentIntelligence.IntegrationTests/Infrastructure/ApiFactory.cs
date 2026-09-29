@@ -5,7 +5,9 @@ using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json.Serialization;
 using DocumentIntelligence.Api.Endpoints;
+using DocumentIntelligence.Api.Realtime;
 using DocumentIntelligence.Application.Abstractions.Analysis;
 using DocumentIntelligence.Application.Abstractions.Calendar;
 using DocumentIntelligence.Application.Authentication;
@@ -15,7 +17,9 @@ using DotNet.Testcontainers.Containers;
 using MassTransit;
 using MassTransit.Testing;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Testcontainers.PostgreSql;
@@ -39,6 +43,15 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     /// Retries per message in tests: a failing message faults after this many attempts plus one.
     /// </summary>
     public const int MessageRetryLimit = 2;
+
+    /// <summary>
+    /// Auth requests per client IP address, and uploads per user, before the API answers 429.
+    /// Requests get a random client IP address unless they pin one (<see cref="TestClientIpStartupFilter"/>).
+    /// </summary>
+    public const int AuthPermitLimit = 5;
+
+    /// <inheritdoc cref="AuthPermitLimit"/>
+    public const int UploadTokenLimit = 5;
 
     private const int S3Port = 8333;
     private const string S3AccessKey = "test-access-key";
@@ -107,6 +120,28 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     }
 
     /// <summary>
+    /// A connection to <see cref="DocumentsHub"/> the way a browser makes it: straight over a WebSocket,
+    /// with the access token in the query string. Not started yet.
+    /// </summary>
+    public HubConnection CreateHubConnection(string? accessToken) =>
+        new HubConnectionBuilder()
+            .WithUrl(new Uri(Server.BaseAddress, DocumentsHub.Path), options =>
+            {
+                options.Transports = HttpTransportType.WebSockets;
+                options.SkipNegotiation = true;
+                options.WebSocketFactory = async (context, cancellationToken) =>
+                {
+                    var uri = accessToken is null
+                        ? context.Uri
+                        : new Uri($"{context.Uri}{(context.Uri.Query.Length == 0 ? '?' : '&')}access_token={Uri.EscapeDataString(accessToken)}");
+
+                    return await Server.CreateWebSocketClient().ConnectAsync(uri, cancellationToken);
+                };
+            })
+            .AddJsonProtocol(options => options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter()))
+            .Build();
+
+    /// <summary>
     /// Waits until a matching message is published, or gives up after <see cref="_messageTimeout"/>.
     /// </summary>
     public Task<bool> PublishedAsync<T>(Func<T, bool> filter)
@@ -163,8 +198,14 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Messaging:Retry:MaxInterval", "00:00:00.200");
         builder.UseSetting("Messaging:Retry:IntervalDelta", "00:00:00.050");
 
+        builder.UseSetting("RateLimiting:AuthPermitLimit", AuthPermitLimit.ToString(CultureInfo.InvariantCulture));
+        builder.UseSetting("RateLimiting:UploadTokenLimit", UploadTokenLimit.ToString(CultureInfo.InvariantCulture));
+        builder.UseSetting("RateLimiting:UploadTokensPerPeriod", "1");
+        builder.UseSetting("RateLimiting:UploadReplenishmentPeriod", "01:00:00");
+
         builder.ConfigureTestServices(services =>
         {
+            services.AddSingleton<IStartupFilter, TestClientIpStartupFilter>();
             services.AddSingleton<IPublicHolidayProvider, StubPublicHolidayProvider>();
             services.Decorate<IDocumentAnalyzer, TransientFailureAnalyzer>();
 
