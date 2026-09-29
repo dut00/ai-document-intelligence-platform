@@ -1,0 +1,64 @@
+# Local infrastructure. Copy .env.example to .env first.
+#   docker compose up -d                        -> Postgres, RabbitMQ, SeaweedFS (S3), Aspire Dashboard
+#   docker compose --profile full up --build    -> additionally api, worker and ui (added in a later step)
+
+name: document-intelligence
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # S3-compatible object storage for uploaded files.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47
+    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    ports:
+      - "8333:8333" # S3 API
+      - "9333:9333" # master UI
+    volumes:
+      - seaweedfs-data:/data
+      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+
+  # Receives OTLP traces, metrics and logs; UI at http://localhost:18888
+  aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:13.0
+    environment:
+      DASHBOARD__FRONTEND__AUTHMODE: Unsecured
+      DASHBOARD__OTLP__AUTHMODE: Unsecured
+    ports:
+      - "18888:18888" # dashboard UI
+      - "4317:18889"  # OTLP gRPC
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  seaweedfs-data:

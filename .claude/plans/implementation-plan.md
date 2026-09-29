@@ -1,7 +1,7 @@
 # Plan: AI Document Intelligence Platform
 
 ## Context
-A portfolio project: build a full-stack, production-oriented application published as a public GitHub repository. A user signs in (JWT) and uploads a PDF or TXT file. The file goes to MinIO and its metadata to PostgreSQL. A message travels through RabbitMQ to a Worker, which extracts the text, analyzes it with Claude (structured output + validation), checks the detected dates against the Nager.Date public-holiday calendar and stores the result. The React UI shows live status (SignalR) and the analysis. General documents are supported (contracts, invoices, letters, etc.). The repo is empty; the branch stays `master`.
+A portfolio project: build a full-stack, production-oriented application published as a public GitHub repository. A user signs in (JWT) and uploads a PDF or TXT file. The file goes to SeaweedFS and its metadata to PostgreSQL. A message travels through RabbitMQ to a Worker, which extracts the text, analyzes it with Claude (structured output + validation), checks the detected dates against the Nager.Date public-holiday calendar and stores the result. The React UI shows live status (SignalR) and the analysis. General documents are supported (contracts, invoices, letters, etc.). The repo is empty; the branch stays `master`.
 
 The project focuses on architecture, reliability (retries, DLQ, idempotency), AI integration quality, tests, Docker and documentation (including `docs/ai-development.md`).
 
@@ -32,11 +32,12 @@ The project focuses on architecture, reliability (retries, DLQ, idempotency), AI
 - **PDF:** PdfPig. TXT files are read directly as UTF-8.
   - Uploads are limited to 10 MB and validated by extension, content type and magic bytes (`%PDF-`).
   - A PDF with no text layer ends as `Failed` with the reason "no extractable text".
+- **File storage:** **SeaweedFS** (Apache 2.0) through its S3 API, accessed with `AWSSDK.S3` behind `IFileStorage`, so any S3-compatible store can replace it. MinIO was dropped because its container images are no longer published.
 - **Frontend:** React + Vite + TypeScript, React Router, TanStack Query, Tailwind, `@microsoft/signalr`.
 - **Optional features in scope:** retry/DLQ, health checks, Serilog, GitHub Actions CI, pagination, rate limiting, SignalR, and OpenTelemetry with the **Aspire Dashboard** container.
-- **Tests:** xUnit, NSubstitute, Shouldly. Integration tests use `WebApplicationFactory` with Testcontainers (Postgres, RabbitMQ, MinIO) and a fake AI.
+- **Tests:** xUnit v3 on Microsoft.Testing.Platform (opted in via `global.json`), NSubstitute, Shouldly. Integration tests use `WebApplicationFactory` with Testcontainers (Postgres, RabbitMQ, SeaweedFS) and a fake AI.
 - **Running locally:**
-  - `docker compose up` starts the infrastructure: Postgres, RabbitMQ, MinIO and the Aspire Dashboard.
+  - `docker compose up` starts the infrastructure: Postgres, RabbitMQ, SeaweedFS and the Aspire Dashboard.
   - The API, the Worker and Vite run locally.
   - The `full` profile also builds and runs api, worker and ui.
 
@@ -49,7 +50,7 @@ docker-compose.yml
 src/
   DocumentIntelligence.Domain/          aggregates, value objects, domain events (no dependencies)
   DocumentIntelligence.Application/     command/query handlers, ports, validators, DTOs
-  DocumentIntelligence.Infrastructure/  EF Core, Identity, JWT, MinIO, MassTransit, Claude, Nager.Date, PdfPig
+  DocumentIntelligence.Infrastructure/  EF Core, Identity, JWT, SeaweedFS, MassTransit, Claude, Nager.Date, PdfPig
   DocumentIntelligence.Contracts/       integration messages (DocumentUploaded, DocumentStatusChanged)
   DocumentIntelligence.Api/             Minimal API endpoints, SignalR hub, middleware
   DocumentIntelligence.Worker/          MassTransit consumer host
@@ -72,13 +73,13 @@ README.md
 
 ## Flow and reliability
 1. **Upload** (`POST /api/documents`, multipart):
-   - Validate the file, then store it in MinIO at `users/{userId}/{docId}`.
+   - Validate the file, then store it in SeaweedFS at `users/{userId}/{docId}`.
    - In one transaction, save `Document(Pending)` and publish `DocumentUploaded` through the outbox.
    - If the DB write fails, delete the blob (compensation).
    - Return `202 Accepted` with a Location header.
 2. **Worker** (`DocumentUploadedConsumer`):
    - Idempotency: the MassTransit inbox plus a conditional `Pending → Processing` transition (concurrency via `xmin`). A `Completed` document is skipped. A deleted document is acked and skipped.
-   - Download the file from MinIO and extract the text (`ITextExtractor` per content type), truncated to a token budget.
+   - Download the file from SeaweedFS and extract the text (`ITextExtractor` per content type), truncated to a token budget.
    - `IDocumentAnalyzer` (Claude): forced `record_analysis` tool with a JSON schema, validated by FluentValidation (`AnalysisResultValidator`). An invalid response gets one retry that includes the validation errors, then the document is marked `Failed`.
    - `IDateInsightsService` with `IPublicHolidayProvider` (Nager.Date typed HttpClient with resilience and IMemoryCache per year/country). Weekends are computed locally. A Nager.Date failure does **not** fail the document: dates are saved with `CalendarCheck = null`, a warning is logged, and the UI shows "Calendar check unavailable".
    - Save the analysis, mark the document `Completed`, and publish `DocumentStatusChanged` through the outbox.
@@ -91,12 +92,12 @@ README.md
 
 ## API (Minimal API, OpenAPI + Scalar)
 - `POST /api/auth/register | login | refresh | logout`, `GET /api/auth/me`
-- `GET /api/documents?page=&pageSize=&status=` (paginated), `GET /api/documents/{id}`, `GET /api/documents/{id}/download` (streamed from MinIO), `DELETE /api/documents/{id}` (DB + blob), `GET /api/documents/stats` (dashboard)
+- `GET /api/documents?page=&pageSize=&status=` (paginated), `GET /api/documents/{id}`, `GET /api/documents/{id}/download` (streamed from SeaweedFS), `DELETE /api/documents/{id}` (DB + blob), `GET /api/documents/stats` (dashboard)
 - Ownership checks live in the handlers: queries are filtered by `OwnerId`, and another user's document returns **404** so its existence is not leaked.
 - OpenAPI document (`Microsoft.AspNetCore.OpenApi`) with the **Scalar UI** at `/scalar` for browsing and trying the API, including a JWT bearer security scheme. Enabled in Development and in the `full` Docker profile.
 - ProblemDetails and a global exception handler.
 - Rate limiting: fixed window on auth, token bucket on upload.
-- Health checks: `/health/live` and `/health/ready` (Postgres, RabbitMQ, MinIO).
+- Health checks: `/health/live` and `/health/ready` (Postgres, RabbitMQ, SeaweedFS).
 - A 10 MB upload limit in Kestrel/FormOptions, plus validation in the handler.
 
 ## Frontend (`frontend/`)
@@ -118,7 +119,7 @@ README.md
 - Custom metrics: `documents.processed`, `ai.analysis.duration`.
 
 ## Docker
-- `docker-compose.yml` runs postgres:17, rabbitmq:4-management, minio (with a `minio/mc` init container that creates the bucket) and aspire-dashboard.
+- `docker-compose.yml` runs postgres:17, rabbitmq:4-management, chrislusf/seaweedfs (S3 API, credentials in `docker/seaweedfs/s3.json`; the app creates the bucket on startup) and aspire-dashboard.
 - The `full` profile adds api, worker and ui (nginx serves the UI build and proxies to the API).
 - Multi-stage Dockerfiles live in `src/…Api`, `src/…Worker` and `frontend`.
 - Config comes from `.env` (copied from `.env.example`). Local secrets live in `dotnet user-secrets` or `.env`.
@@ -145,7 +146,7 @@ README.md
 0. Housekeeping: save an English feedback memory ("all project files, plans and memory in English; user writes in Polish"), then copy this plan to `.claude/plans/implementation-plan.md` in the repo (committed; the source of truth from then on).
 1. Skeleton: solution, projects, CPM, `.gitignore`, docker-compose with the infrastructure, ServiceDefaults.
 2. Domain (aggregates, value objects, domain events), CQRS building blocks (handler interfaces, decorators, `Result`), Infrastructure (DbContext, Identity, migration), Auth (JWT, refresh, endpoints) and auth tests.
-3. Documents: `IFileStorage` (MinIO), upload/list/details/download/delete/stats, outbox, and tests.
+3. Documents: `IFileStorage` (SeaweedFS), upload/list/details/download/delete/stats, outbox, and tests.
 4. Worker: consumer, text extraction, `IDocumentAnalyzer` (Claude + Fake), validation, Nager.Date date insights, retry/DLQ/Fault, and tests.
 5. SignalR, rate limiting, health checks, OpenTelemetry with the Aspire Dashboard.
 6. Frontend: auth flow, dashboard, upload, list, details, SignalR.

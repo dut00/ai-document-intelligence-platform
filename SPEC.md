@@ -6,7 +6,7 @@ A full-stack, production-oriented portfolio project, published as a public GitHu
 ## MVP scope
 - **Auth:** register, login, refresh, logout (JWT access token in memory, rotated refresh token in an httpOnly cookie).
 - **Documents:** upload (PDF/TXT, max 10 MB, magic-byte check), paginated list, details, download, delete, dashboard stats. Owner-only access (another user's document → 404).
-- **Processing:** file in MinIO, metadata in PostgreSQL, `DocumentUploaded` via outbox → RabbitMQ → Worker. Status flow `Pending → Processing → Completed | Failed`.
+- **Processing:** file in SeaweedFS, metadata in PostgreSQL, `DocumentUploaded` via outbox → RabbitMQ → Worker. Status flow `Pending → Processing → Completed | Failed`.
 - **AI analysis:** document type, summary, entities, important dates (type + meaning), financial info, risks. Claude via forced tool use + FluentValidation, one corrective retry. Fake analyzer when no API key.
 - **Date insights:** backend (not AI) checks weekends/holidays and the next business day via Nager.Date. An API failure does not fail the document ("Calendar check unavailable").
 - **Reliability:** retries, delayed redelivery, DLQ (`_error`), idempotency (inbox + `xmin` concurrency), permanent vs transient errors.
@@ -24,9 +24,9 @@ A full-stack, production-oriented portfolio project, published as a public GitHu
 - **Backend:** .NET, ASP.NET Core Minimal API with OpenAPI + Scalar UI, Clean Architecture + DDD + CQRS with custom handlers and decorators (no MediatR — license), `Result<T>` → ProblemDetails, EF Core + PostgreSQL, ASP.NET Core Identity (core) + JWT.
 - **Messaging:** MassTransit v8 (OSS; v9 is commercial) + RabbitMQ, EF Core transactional outbox/inbox.
 - **AI:** official `Anthropic` NuGet package, default model `claude-haiku-4-5-20251001` (configurable).
-- **Other:** MinIO (storage), PdfPig (PDF text), Nager.Date (holidays, cached per year/country, default `PL`).
+- **Other:** SeaweedFS via S3 API (`AWSSDK.S3`, storage), PdfPig (PDF text), Nager.Date (holidays, cached per year/country, default `PL`).
 - **Frontend:** React + Vite + TypeScript, React Router, TanStack Query, Tailwind, `@microsoft/signalr`.
-- **Infra:** `docker compose up` for Postgres, RabbitMQ, MinIO, Aspire Dashboard; `full` profile also runs api, worker, ui.
+- **Infra:** `docker compose up` for Postgres, RabbitMQ, SeaweedFS, Aspire Dashboard; `full` profile also runs api, worker, ui.
 
 **Repository layout**
 ```
@@ -39,5 +39,5 @@ docs/       architecture.md, decisions.md (ADRs), ai-development.md
 
 **Tests:** xUnit, NSubstitute, Shouldly.
 - Unit: `Document` aggregate and value objects, validators, upload validation, JWT/refresh rotation, consumer (idempotency, error types, Nager.Date failure), `DateInsightsService`, holiday provider, Claude response parsing.
-- Integration: `WebApplicationFactory` + Testcontainers (Postgres, RabbitMQ, MinIO), fake AI — auth flow, authorization (401/404), full upload → processing → download → delete.
+- Integration: `WebApplicationFactory` + Testcontainers (Postgres, RabbitMQ, SeaweedFS), fake AI — auth flow, authorization (401/404), full upload → processing → download → delete.
 - CI: `dotnet build/test` and `npm ci && npm run lint && npm run build`.

@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Pure domain model: aggregates, value objects and domain events. No dependencies. -->
+
+</Project>

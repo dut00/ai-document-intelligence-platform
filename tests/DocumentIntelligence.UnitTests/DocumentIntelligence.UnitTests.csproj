@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DocumentIntelligence.Domain\DocumentIntelligence.Domain.csproj" />
+    <ProjectReference Include="..\..\src\DocumentIntelligence.Application\DocumentIntelligence.Application.csproj" />
+    <ProjectReference Include="..\..\src\DocumentIntelligence.Infrastructure\DocumentIntelligence.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

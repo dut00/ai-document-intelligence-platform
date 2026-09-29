@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Use cases: command/query handlers, ports, validators and DTOs. -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\DocumentIntelligence.Domain\DocumentIntelligence.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

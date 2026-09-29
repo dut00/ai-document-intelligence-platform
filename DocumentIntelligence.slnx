@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DocumentIntelligence.Api/DocumentIntelligence.Api.csproj" />
+    <Project Path="src/DocumentIntelligence.Application/DocumentIntelligence.Application.csproj" />
+    <Project Path="src/DocumentIntelligence.Contracts/DocumentIntelligence.Contracts.csproj" />
+    <Project Path="src/DocumentIntelligence.Domain/DocumentIntelligence.Domain.csproj" />
+    <Project Path="src/DocumentIntelligence.Infrastructure/DocumentIntelligence.Infrastructure.csproj" />
+    <Project Path="src/DocumentIntelligence.ServiceDefaults/DocumentIntelligence.ServiceDefaults.csproj" />
+    <Project Path="src/DocumentIntelligence.Worker/DocumentIntelligence.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DocumentIntelligence.IntegrationTests/DocumentIntelligence.IntegrationTests.csproj" />
+    <Project Path="tests/DocumentIntelligence.UnitTests/DocumentIntelligence.UnitTests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- HTTP entry point: Minimal API endpoints, SignalR hub, middleware. -->
+
+  <PropertyGroup>
+    <UserSecretsId>document-intelligence-api</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Scalar.AspNetCore" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DocumentIntelligence.Infrastructure\DocumentIntelligence.Infrastructure.csproj" />
+    <ProjectReference Include="..\DocumentIntelligence.ServiceDefaults\DocumentIntelligence.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+</Project>
