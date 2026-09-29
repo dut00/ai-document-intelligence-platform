@@ -1,9 +1,9 @@
 # Plan: AI Document Intelligence Platform
 
 ## Context
-A recruitment task: build a full-stack, production-oriented application published as a public GitHub repository. A user signs in (JWT) and uploads a PDF or TXT file. The file goes to MinIO and its metadata to PostgreSQL. A message travels through RabbitMQ to a Worker, which extracts the text, analyzes it with Claude (structured output + validation), checks the detected dates against the Nager.Date public-holiday calendar and stores the result. The React UI shows live status (SignalR) and the analysis. General documents are supported (contracts, invoices, letters, etc.). The repo is empty; the branch stays `master`.
+A portfolio project: build a full-stack, production-oriented application published as a public GitHub repository. A user signs in (JWT) and uploads a PDF or TXT file. The file goes to MinIO and its metadata to PostgreSQL. A message travels through RabbitMQ to a Worker, which extracts the text, analyzes it with Claude (structured output + validation), checks the detected dates against the Nager.Date public-holiday calendar and stores the result. The React UI shows live status (SignalR) and the analysis. General documents are supported (contracts, invoices, letters, etc.). The repo is empty; the branch stays `master`.
 
-Evaluation focuses on architecture, reliability (retries, DLQ, idempotency), AI integration quality, tests, Docker and documentation (including `docs/ai-development.md`).
+The project focuses on architecture, reliability (retries, DLQ, idempotency), AI integration quality, tests, Docker and documentation (including `docs/ai-development.md`).
 
 ## Agreed decisions
 - **Language:** all project files are in **English**: code, comments, README, `docs/`, commit messages, UI, plan files and everything under `.claude`. The user writes in Polish; memory and all saved files are in English.
@@ -93,6 +93,7 @@ README.md
 - `POST /api/auth/register | login | refresh | logout`, `GET /api/auth/me`
 - `GET /api/documents?page=&pageSize=&status=` (paginated), `GET /api/documents/{id}`, `GET /api/documents/{id}/download` (streamed from MinIO), `DELETE /api/documents/{id}` (DB + blob), `GET /api/documents/stats` (dashboard)
 - Ownership checks live in the handlers: queries are filtered by `OwnerId`, and another user's document returns **404** so its existence is not leaked.
+- OpenAPI document (`Microsoft.AspNetCore.OpenApi`) with the **Scalar UI** at `/scalar` for browsing and trying the API, including a JWT bearer security scheme. Enabled in Development and in the `full` Docker profile.
 - ProblemDetails and a global exception handler.
 - Rate limiting: fixed window on auth, token bucket on upload.
 - Health checks: `/health/live` and `/health/ready` (Postgres, RabbitMQ, MinIO).
