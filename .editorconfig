@@ -22,6 +22,9 @@ trim_trailing_whitespace = false
 csharp_style_namespace_declarations = file_scoped:warning
 dotnet_sort_system_directives_first = true
 csharp_using_directive_placement = outside_namespace:warning
+# Namespace must match the project name + folder path (DocumentIntelligence.<Layer>...)
+dotnet_style_namespace_match_folder = true
+dotnet_diagnostic.IDE0130.severity = warning
 
 # Style preferences
 csharp_style_var_for_built_in_types = true:suggestion
@@ -32,6 +35,9 @@ csharp_style_expression_bodied_properties = true:suggestion
 csharp_style_prefer_primary_constructors = true:suggestion
 csharp_prefer_braces = true:suggestion
 dotnet_style_readonly_field = true:warning
+
+# Naming rules are reported as IDE1006; the build only enforces them with an explicit severity.
+dotnet_diagnostic.IDE1006.severity = warning
 
 # Naming: constants use PascalCase (takes precedence over the private field rule below)
 dotnet_naming_rule.constants_pascal_case.symbols = constant_fields
