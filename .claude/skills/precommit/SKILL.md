@@ -1,6 +1,6 @@
 ---
 name: precommit
-description: Build the solution, run all unit and integration tests, and check the working tree before a commit. Use before every commit, and whenever the user asks to check the build and tests before committing.
+description: Build the solution, run all unit and integration tests, lint and build the frontend, and check the working tree before a commit. Use before every commit, and whenever the user asks to check the build and tests before committing.
 context: fork
 ---
 
@@ -35,6 +35,17 @@ dotnet test --solution DocumentIntelligence.slnx
 Add `--artifacts-path <scratchpad>/artifacts` if step 2 needed it. Tests run on Microsoft.Testing.Platform: filter with `--filter-class` / `--filter-method`, never VSTest `--filter`.
 
 If a test fails, re-run only that class to tell a real failure from a flaky one. A test that fails only sometimes is still a finding: report it, do not hide it by re-running until it passes.
+
+## 3b. Frontend
+
+If anything under `frontend/` changed, run in `frontend/` (after `npm ci` when `node_modules` is missing or `package-lock.json` changed):
+
+```sh
+npm run lint
+npm run build
+```
+
+Both must pass with no errors or warnings.
 
 ## 4. Working tree
 

@@ -12,6 +12,8 @@ docker compose up -d                                  # Postgres, RabbitMQ (UI :
 dotnet build DocumentIntelligence.slnx
 dotnet run --project src/DocumentIntelligence.Api     # http://localhost:5080: Scalar UI /scalar, hub /hubs/documents, /health/ready
 dotnet run --project src/DocumentIntelligence.Worker # fake analyzer unless a Claude key is set (below)
+(cd frontend && npm install && npm run dev)           # http://localhost:5173, proxies /api and /hubs to the API (API_URL overrides)
+(cd frontend && npm run lint && npm run build)        # oxlint, then tsc + vite build
 dotnet test --solution DocumentIntelligence.slnx
 dotnet test --project tests/DocumentIntelligence.UnitTests --filter-class "*LayerDependencyTests"
 dotnet user-secrets set Anthropic:ApiKey <key> --project src/DocumentIntelligence.Worker  # or ANTHROPIC_API_KEY
@@ -36,6 +38,7 @@ src/
   DocumentIntelligence.ServiceDefaults/ Serilog, OpenTelemetry, health checks
   DocumentIntelligence.Api/             Minimal API host
   DocumentIntelligence.Worker/          MassTransit consumer host
+frontend/                               React + Vite + TS: api/ (fetch client, DTO types), auth/, realtime/ (SignalR), pages/, components/
 tests/                                  UnitTests, IntegrationTests
 docker/                                 container config (SeaweedFS S3 credentials)
 ```
@@ -56,6 +59,6 @@ Package versions go only in `Directory.Packages.props` (central package manageme
 
 ## Rule: verify before finishing
 
-After every change, run `dotnet build DocumentIntelligence.slnx` and `dotnet test --solution DocumentIntelligence.slnx`, and fix every error before finishing. Warnings are errors (`TreatWarningsAsErrors`, `EnforceCodeStyleInBuild`), so style violations fail the build too.
+After every change, run `dotnet build DocumentIntelligence.slnx` and `dotnet test --solution DocumentIntelligence.slnx` (for changes under `frontend/`: `npm run lint` and `npm run build` there), and fix every error before finishing. Warnings are errors (`TreatWarningsAsErrors`, `EnforceCodeStyleInBuild`), so style violations fail the build too.
 
 Before every commit, run the `/precommit` skill (`.claude/skills/precommit/SKILL.md`; not the built-in `/verify`, which checks a running app instead): it builds, runs all tests, checks the working tree (line endings, stray files) and reports whether the change is ready to commit. Then run the `reviewer` agent (`.claude/agents/reviewer.md`) on the change: a read-only review of design, correctness, security and test gaps that the build cannot catch.
