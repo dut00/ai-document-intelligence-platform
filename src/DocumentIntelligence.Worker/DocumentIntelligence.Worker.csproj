@@ -11,6 +11,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\DocumentIntelligence.Application\DocumentIntelligence.Application.csproj" />
+    <ProjectReference Include="..\DocumentIntelligence.Contracts\DocumentIntelligence.Contracts.csproj" />
     <ProjectReference Include="..\DocumentIntelligence.Infrastructure\DocumentIntelligence.Infrastructure.csproj" />
     <ProjectReference Include="..\DocumentIntelligence.ServiceDefaults\DocumentIntelligence.ServiceDefaults.csproj" />
   </ItemGroup>

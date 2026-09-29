@@ -35,7 +35,7 @@ The project focuses on architecture, reliability (retries, DLQ, idempotency), AI
 - **File storage:** **SeaweedFS** (Apache 2.0) through its S3 API, accessed with `AWSSDK.S3` behind `IFileStorage`, so any S3-compatible store can replace it. MinIO was dropped because its container images are no longer published.
 - **Frontend:** React + Vite + TypeScript, React Router, TanStack Query, Tailwind, `@microsoft/signalr`.
 - **Optional features in scope:** retry/DLQ, health checks, Serilog, GitHub Actions CI, pagination, rate limiting, SignalR, and OpenTelemetry with the **Aspire Dashboard** container.
-- **Tests:** xUnit v3 on Microsoft.Testing.Platform (opted in via `global.json`), NSubstitute, Shouldly. Integration tests use `WebApplicationFactory` with Testcontainers (Postgres, RabbitMQ, SeaweedFS) and a fake AI.
+- **Tests:** xUnit v3 on Microsoft.Testing.Platform (opted in via `global.json`), NSubstitute, Shouldly. Integration tests use `WebApplicationFactory` with Testcontainers (Postgres, SeaweedFS), MassTransit's in-memory test harness in place of RabbitMQ (it also hosts the Worker's consumers in-process) and a fake AI.
 - **Running locally:**
   - `docker compose up` starts the infrastructure: Postgres, RabbitMQ, SeaweedFS and the Aspire Dashboard.
   - The API, the Worker and Vite run locally.

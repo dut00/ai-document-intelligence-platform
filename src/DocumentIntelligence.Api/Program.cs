@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json.Serialization;
 using DocumentIntelligence.Api.Endpoints;
 using DocumentIntelligence.Api.OpenApi;
 using DocumentIntelligence.Application;
@@ -14,7 +15,12 @@ builder.AddServiceDefaults();
 
 builder.Services
     .AddApplication()
-    .AddInfrastructure(builder.Configuration);
+    .AddInfrastructure(builder.Configuration)
+    .AddIdentityAndTokens();
+
+// Enums travel as names ("Completed"), which the frontend and the OpenAPI document can rely on.
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 builder.Services.AddAuthorization();
 builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
@@ -40,6 +46,7 @@ if (app.Configuration.GetValue("OpenApi:Enabled", app.Environment.IsDevelopment(
 
 app.MapDefaultEndpoints();
 app.MapAuthEndpoints();
+app.MapDocumentEndpoints();
 
 if (app.Configuration.GetValue("Database:MigrateOnStartup", app.Environment.IsDevelopment()))
 {

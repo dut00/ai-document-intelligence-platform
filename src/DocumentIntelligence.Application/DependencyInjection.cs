@@ -23,6 +23,9 @@ public static class DependencyInjection
                 classes => classes.AssignableTo(typeof(IQueryHandler<,>)).Where(type => !type.IsGenericType),
                 publicOnly: false)
             .AsImplementedInterfaces()
+            .WithScopedLifetime()
+            .AddClasses(classes => classes.AssignableTo(typeof(IDomainEventHandler<>)), publicOnly: false)
+            .AsImplementedInterfaces()
             .WithScopedLifetime());
 
         // Decorators wrap in registration order: logging ends up outermost, so it also records validation failures.

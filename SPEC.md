@@ -39,5 +39,5 @@ docs/       architecture.md, decisions.md (ADRs), ai-development.md
 
 **Tests:** xUnit, NSubstitute, Shouldly.
 - Unit: `Document` aggregate and value objects, validators, upload validation, JWT/refresh rotation, consumer (idempotency, error types, Nager.Date failure), `DateInsightsService`, holiday provider, Claude response parsing.
-- Integration: `WebApplicationFactory` + Testcontainers (Postgres, RabbitMQ, SeaweedFS), fake AI — auth flow, authorization (401/404), full upload → processing → download → delete.
+- Integration: `WebApplicationFactory` + Testcontainers (Postgres, SeaweedFS) + MassTransit in-memory test harness, fake AI — auth flow, authorization (401/404), full upload → processing → download → delete.
 - CI: `dotnet build/test` and `npm ci && npm run lint && npm run build`.

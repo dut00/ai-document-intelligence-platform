@@ -7,8 +7,9 @@ namespace DocumentIntelligence.Domain.Documents.Analysis;
 /// </summary>
 public sealed class DocumentAnalysis : Entity<DocumentId>
 {
+    // Parameter names match the properties so EF Core can bind this constructor.
     private DocumentAnalysis(
-        DocumentId documentId,
+        DocumentId id,
         string documentType,
         string summary,
         IReadOnlyList<ExtractedEntity> entities,
@@ -17,7 +18,7 @@ public sealed class DocumentAnalysis : Entity<DocumentId>
         IReadOnlyList<Risk> potentialRisks,
         string model,
         DateTimeOffset createdAt)
-        : base(documentId)
+        : base(id)
     {
         DocumentType = documentType;
         Summary = summary;

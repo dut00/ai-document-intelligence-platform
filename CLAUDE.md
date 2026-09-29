@@ -22,7 +22,7 @@ Migrations (`dotnet-ef` is a local tool: run `dotnet tool restore` once); the AP
 dotnet ef migrations add <Name> --project src/DocumentIntelligence.Infrastructure --startup-project src/DocumentIntelligence.Api --output-dir Persistence/Migrations
 ```
 
-Integration tests need Docker running (Testcontainers starts Postgres). Tests run on Microsoft.Testing.Platform: use `--solution`/`--project` and `--filter-class`/`--filter-method`, not VSTest syntax.
+Integration tests need Docker running (Testcontainers starts Postgres and SeaweedFS; RabbitMQ is replaced by MassTransit's in-memory test harness, which also runs the Worker's consumers). Tests run on Microsoft.Testing.Platform: use `--solution`/`--project` and `--filter-class`/`--filter-method`, not VSTest syntax.
 
 ## Structure
 

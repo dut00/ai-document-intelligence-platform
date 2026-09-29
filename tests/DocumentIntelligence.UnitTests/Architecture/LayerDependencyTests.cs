@@ -9,7 +9,7 @@ public sealed class LayerDependencyTests
     [Theory]
     [InlineData("DocumentIntelligence.Domain", new string[0])]
     [InlineData("DocumentIntelligence.Contracts", new string[0])]
-    [InlineData("DocumentIntelligence.Application", new[] { "DocumentIntelligence.Domain" })]
+    [InlineData("DocumentIntelligence.Application", new[] { "DocumentIntelligence.Domain", "DocumentIntelligence.Contracts" })]
     public void Layer_depends_only_on_allowed_project_assemblies(string assemblyName, string[] allowed)
     {
         var projectReferences = Assembly.Load(assemblyName)

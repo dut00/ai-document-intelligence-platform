@@ -8,10 +8,17 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Scrutor" />
+    <!-- Query handlers compose LINQ over IReadDbContext and need EF Core's async operators. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\DocumentIntelligence.Contracts\DocumentIntelligence.Contracts.csproj" />
     <ProjectReference Include="..\DocumentIntelligence.Domain\DocumentIntelligence.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DocumentIntelligence.UnitTests" />
   </ItemGroup>
 
 </Project>

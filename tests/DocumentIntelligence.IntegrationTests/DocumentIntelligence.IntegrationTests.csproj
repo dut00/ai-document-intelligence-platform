@@ -2,11 +2,15 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Testcontainers" />
     <PackageReference Include="Testcontainers.PostgreSql" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\DocumentIntelligence.Api\DocumentIntelligence.Api.csproj" />
+    <!-- The Worker's consumers run in-process on the in-memory test bus. Aliased because
+         both hosts define a public Program class. -->
+    <ProjectReference Include="..\..\src\DocumentIntelligence.Worker\DocumentIntelligence.Worker.csproj" Aliases="worker" />
   </ItemGroup>
 
 </Project>
