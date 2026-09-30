@@ -1,5 +1,7 @@
 # AI Document Intelligence Platform
 
+[![CI](https://github.com/dut00/ai-document-intelligence-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/dut00/ai-document-intelligence-platform/actions/workflows/ci.yml)
+
 Upload a contract, an invoice or a letter, and get back a structured analysis: the document type, a summary, the parties, the important dates with their meaning, the amounts and the potential risks. The dates are checked against the public-holiday calendar, so a payment deadline falling on a holiday is flagged together with the next business day.
 
 This is a portfolio project. Its focus is less on features and more on how a production-oriented system is put together:
