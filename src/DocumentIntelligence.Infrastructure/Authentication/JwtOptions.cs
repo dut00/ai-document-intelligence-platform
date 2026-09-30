@@ -24,4 +24,12 @@ public sealed class JwtOptions
 
     [Range(typeof(TimeSpan), "01:00:00", "90.00:00:00")]
     public TimeSpan RefreshTokenLifetime { get; init; } = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// How long a just-rotated refresh token is still accepted while its successor is unused, for a
+    /// client that never received the new cookie (e.g. the page reloaded mid-refresh). Keep it short:
+    /// within it, a copied token is not detected as reuse.
+    /// </summary>
+    [Range(typeof(TimeSpan), "00:00:00", "00:05:00")]
+    public TimeSpan RefreshTokenReuseGracePeriod { get; init; } = TimeSpan.FromSeconds(10);
 }

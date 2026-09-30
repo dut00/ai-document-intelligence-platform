@@ -3,8 +3,11 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using DocumentIntelligence.Api.Endpoints;
 using DocumentIntelligence.Application.Authentication;
+using DocumentIntelligence.Infrastructure.Persistence;
 using DocumentIntelligence.IntegrationTests.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DocumentIntelligence.IntegrationTests;
 
@@ -45,20 +48,103 @@ public sealed class AuthEndpointsTests(ApiFactory factory)
     }
 
     [Fact]
-    public async Task Reusing_a_rotated_refresh_token_revokes_the_whole_session()
+    public async Task Reusing_a_rotated_refresh_token_after_its_successor_was_used_revokes_the_whole_session()
     {
         var email = UniqueEmail();
         await RegisterAsync(email);
         var (_, original) = await LoginAsync(email);
 
-        var firstRefresh = await PostWithCookieAsync("/api/auth/refresh", original);
-        var rotated = ReadRefreshCookie(firstRefresh);
+        var rotated = ReadRefreshCookie(await PostWithCookieAsync("/api/auth/refresh", original));
+        var current = ReadRefreshCookie(await PostWithCookieAsync("/api/auth/refresh", rotated));
 
-        // The old token is presented again, e.g. by an attacker who copied it.
+        // The client provably received the successor, so the old token is a copy, even within the grace period.
         (await PostWithCookieAsync("/api/auth/refresh", original)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 
-        // The legitimate successor is revoked as well.
+        // The legitimate client's token is revoked as well.
+        (await PostWithCookieAsync("/api/auth/refresh", current)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Reusing_a_rotated_refresh_token_after_the_grace_period_revokes_the_whole_session()
+    {
+        var email = UniqueEmail();
+        var userId = await RegisterAsync(email);
+        var (_, original) = await LoginAsync(email);
+        var rotated = ReadRefreshCookie(await PostWithCookieAsync("/api/auth/refresh", original));
+
+        await AgeRevokedTokensAsync(userId, TimeSpan.FromHours(1));
+
+        (await PostWithCookieAsync("/api/auth/refresh", original)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         (await PostWithCookieAsync("/api/auth/refresh", rotated)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Refresh_token_rotated_moments_ago_is_accepted_while_its_successor_is_unused()
+    {
+        var email = UniqueEmail();
+        await RegisterAsync(email);
+        var (_, original) = await LoginAsync(email);
+
+        // The response with the successor never reached the browser, e.g. the page reloaded mid-refresh.
+        await PostWithCookieAsync("/api/auth/refresh", original);
+
+        var retry = await PostWithCookieAsync("/api/auth/refresh", original);
+        retry.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var recovered = ReadRefreshCookie(retry);
+
+        var next = await PostWithCookieAsync("/api/auth/refresh", recovered);
+        next.StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Logout_with_a_token_rotated_moments_ago_revokes_its_successor()
+    {
+        var email = UniqueEmail();
+        await RegisterAsync(email);
+        var (_, original) = await LoginAsync(email);
+
+        // A refresh raced the logout: the logout still carries the old cookie.
+        var rotated = ReadRefreshCookie(await PostWithCookieAsync("/api/auth/refresh", original));
+        (await PostWithCookieAsync("/api/auth/logout", original)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        (await PostWithCookieAsync("/api/auth/refresh", rotated)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+
+        // Replaying the logged-out chain is refused without ending the user's sessions elsewhere.
+        var (_, otherDevice) = await LoginAsync(email);
+        (await PostWithCookieAsync("/api/auth/refresh", original)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        (await PostWithCookieAsync("/api/auth/refresh", otherDevice)).StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Logout_follows_grace_rotations_to_the_live_token()
+    {
+        var email = UniqueEmail();
+        await RegisterAsync(email);
+        var (_, original) = await LoginAsync(email);
+
+        // Two lost responses: original -> lost successor -> recovered, all within the grace period.
+        await PostWithCookieAsync("/api/auth/refresh", original);
+        var recovered = ReadRefreshCookie(await PostWithCookieAsync("/api/auth/refresh", original));
+
+        (await PostWithCookieAsync("/api/auth/logout", original)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        (await PostWithCookieAsync("/api/auth/refresh", recovered)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Logout_with_a_token_rotated_by_someone_else_revokes_the_whole_session()
+    {
+        var email = UniqueEmail();
+        var userId = await RegisterAsync(email);
+        var (_, original) = await LoginAsync(email);
+
+        // Someone with a copy rotated the token; the user's cookie still holds the original.
+        var stolen = ReadRefreshCookie(await PostWithCookieAsync("/api/auth/refresh", original));
+        await AgeRevokedTokensAsync(userId, TimeSpan.FromHours(1));
+
+        (await PostWithCookieAsync("/api/auth/logout", original)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        (await PostWithCookieAsync("/api/auth/refresh", stolen)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
@@ -113,10 +199,23 @@ public sealed class AuthEndpointsTests(ApiFactory factory)
 
     private static string UniqueEmail() => $"user-{Guid.NewGuid():N}@example.com";
 
-    private async Task RegisterAsync(string email)
+    private async Task<Guid> RegisterAsync(string email)
     {
         var response = await _client.PostAsJsonAsync("/api/auth/register", new { email, password = Password }, CancellationToken);
         response.EnsureSuccessStatusCode();
+
+        return (await response.Content.ReadFromJsonAsync<UserResponse>(CancellationToken))!.Id;
+    }
+
+    // Moves the user's rotations into the past, as if the grace period had elapsed.
+    private async Task AgeRevokedTokensAsync(Guid userId, TimeSpan age)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        await dbContext.RefreshTokens
+            .Where(token => token.UserId == userId && token.RevokedAt != null)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(token => token.RevokedAt, token => token.RevokedAt - age), CancellationToken);
     }
 
     private async Task<(string AccessToken, string RefreshToken)> LoginAsync(string email)
