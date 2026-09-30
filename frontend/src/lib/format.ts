@@ -1,5 +1,8 @@
-const dateTimeFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: 'UTC' })
+// The UI text is English, so dates and amounts follow it rather than the browser's language.
+const locale = 'en-GB'
+
+const dateTimeFormat = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
+const dateFormat = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UTC' })
 
 export function formatDateTime(value: string): string {
   return dateTimeFormat.format(new Date(value))
@@ -11,7 +14,7 @@ export function formatDate(value: string): string {
 }
 
 export function formatWeekday(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${value}T00:00:00Z`))
+  return new Intl.DateTimeFormat(locale, { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${value}T00:00:00Z`))
 }
 
 export function formatFileSize(bytes: number): string {
@@ -25,10 +28,10 @@ export function formatFileSize(bytes: number): string {
 
 export function formatMoney(amount: number, currency: string): string {
   try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amount)
+    return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(amount)
   } catch {
     // Not an ISO 4217 code the browser knows.
-    return `${amount.toLocaleString()} ${currency}`
+    return `${amount.toLocaleString(locale)} ${currency}`
   }
 }
 

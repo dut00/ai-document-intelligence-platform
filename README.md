@@ -14,6 +14,18 @@ This is a portfolio project. Its focus is less on features and more on how a pro
 
 It was built with Claude Code; [docs/ai-development.md](docs/ai-development.md) describes how.
 
+## Screenshots
+
+The documents below are fictional; they were analyzed by `claude-haiku-4-5-20251001`.
+
+**Dashboard.** Counts by status, and the latest uploads. The scanned PDF has no text layer, so it failed.
+
+![Dashboard with document counts and recent uploads](docs/images/dashboard.png)
+
+**Document details.** Summary, dates with calendar checks (1 November 2026 is a Sunday and All Saints' Day, so the next business day is shown), parties, amounts and risks ranked by severity.
+
+![Analysis of a service agreement: summary, important dates with weekend and holiday badges, entities, financial information and risks](docs/images/document-details.png)
+
 ## How it works
 
 ```mermaid

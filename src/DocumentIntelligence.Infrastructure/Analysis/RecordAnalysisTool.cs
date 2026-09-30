@@ -84,7 +84,7 @@ internal static class RecordAnalysisTool
             },
             "financial_information": {
               "type": "array",
-              "description": "Amounts of money such as prices, totals, fees and penalties.",
+              "description": "Amounts of money written in the document with a currency, such as prices, totals, fees and penalties. Take each figure as stated in the document, as a plain number, and never calculate one. Leave out anything expressed as a percentage (e.g. a penalty of 1% of the fee), rates without a currency and quantities such as areas; mention those in the summary or risks instead.",
               "items": {
                 "type": "object",
                 "properties": {

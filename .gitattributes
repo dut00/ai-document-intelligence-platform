@@ -1,2 +1,8 @@
 * text=auto eol=lf
-*.{png,jpg,jpeg,gif,ico,pdf} binary
+# One pattern per extension: gitattributes has no brace expansion.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary

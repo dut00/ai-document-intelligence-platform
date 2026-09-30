@@ -73,6 +73,7 @@ Later decisions, from facts discovered during implementation:
 - **SeaweedFS instead of MinIO.** MinIO no longer publishes container images, which surfaced while writing the compose file ([ADR 011](decisions.md#011-seaweedfs-as-the-object-store)).
 - **No delayed redelivery.** It needs a RabbitMQ plugin the stock image lacks ([ADR 005](decisions.md#005-in-process-exponential-retries-no-delayed-redelivery)).
 - **No `temperature`,** because newer models reject values other than the default.
+- **Financial items are copied, never calculated.** While the README screenshots were being taken with the real model, Haiku recorded "a penalty of 1% of the monthly fee" as *PLN 1.00*, and a 10% cap as an amount it had computed itself. The tool schema now asks for figures as stated, never calculated, and leaves percentages, rates without a currency and quantities to the summary and the risks. Only a run against the real model could surface this; the fake analyzer and the validator both accepted the output.
 - **`Processing` is never committed on its own** ([ADR 006](decisions.md#006-processing-is-never-committed-on-its-own)). Because of that, SignalR pushes only final statuses, a documented deviation from the plan.
 
 ## What the review loop caught
