@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json.Serialization;
 using DocumentIntelligence.Api.Endpoints;
+using DocumentIntelligence.Api.Networking;
 using DocumentIntelligence.Api.OpenApi;
 using DocumentIntelligence.Api.RateLimiting;
 using DocumentIntelligence.Api.Realtime;
@@ -20,7 +21,8 @@ builder.Services
     .AddInfrastructure(builder.Configuration, bus => bus.AddRealtimeConsumers())
     .AddJwtAuthentication()
     .AddRealtime()
-    .AddApiRateLimiting();
+    .AddApiRateLimiting()
+    .AddTrustedForwardedHeaders(builder.Configuration);
 
 // Enums travel as names ("Completed"), which the frontend and the OpenAPI document can rely on.
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -35,6 +37,8 @@ builder.Services.AddOpenApi(options => options
 
 var app = builder.Build();
 
+// First, so logging and the per-IP rate limit see the client's address rather than the proxy's.
+app.UseForwardedHeaders();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseSerilogRequestLogging();

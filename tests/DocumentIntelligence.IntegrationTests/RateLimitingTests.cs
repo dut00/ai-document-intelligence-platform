@@ -36,6 +36,35 @@ public sealed class RateLimitingTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task Auth_requests_through_a_trusted_proxy_are_limited_per_forwarded_client_ip_address()
+    {
+        using var client = ClientFrom(ApiFactory.TrustedProxyIp);
+
+        for (var attempt = 0; attempt < ApiFactory.AuthPermitLimit; attempt++)
+        {
+            (await LoginAsync(client, forwardedFor: "203.0.113.20")).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        }
+
+        (await LoginAsync(client, forwardedFor: "203.0.113.20")).StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+
+        // Another client behind the same proxy has its own limit.
+        (await LoginAsync(client, forwardedFor: "203.0.113.21")).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Forwarded_client_ip_address_from_an_untrusted_sender_is_ignored()
+    {
+        using var client = ClientFrom("203.0.113.30");
+
+        for (var attempt = 0; attempt < ApiFactory.AuthPermitLimit; attempt++)
+        {
+            (await LoginAsync(client, forwardedFor: $"203.0.113.{100 + attempt}")).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        }
+
+        (await LoginAsync(client, forwardedFor: "203.0.113.200")).StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+    }
+
+    [Fact]
     public async Task Uploads_are_limited_per_user()
     {
         var (client, _) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
@@ -61,6 +90,14 @@ public sealed class RateLimitingTests(ApiFactory factory)
         return client;
     }
 
-    private static Task<HttpResponseMessage> LoginAsync(HttpClient client) =>
-        client.PostAsJsonAsync("/api/auth/login", _wrongCredentials, CancellationToken);
+    private static async Task<HttpResponseMessage> LoginAsync(HttpClient client, string? forwardedFor = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login") { Content = JsonContent.Create(_wrongCredentials) };
+        if (forwardedFor is not null)
+        {
+            request.Headers.Add("X-Forwarded-For", forwardedFor);
+        }
+
+        return await client.SendAsync(request, CancellationToken);
+    }
 }

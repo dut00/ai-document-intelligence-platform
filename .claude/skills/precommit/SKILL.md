@@ -1,6 +1,6 @@
 ---
 name: precommit
-description: Build the solution, run all unit and integration tests, lint and build the frontend, and check the working tree before a commit. Use before every commit, and whenever the user asks to check the build and tests before committing.
+description: Build the solution, run all unit and integration tests, lint and build the frontend, build the Docker images when their inputs changed, and check the working tree before a commit. Use before every commit, and whenever the user asks to check the build and tests before committing.
 context: fork
 ---
 
@@ -46,6 +46,14 @@ npm run build
 ```
 
 Both must pass with no errors or warnings.
+
+## 3c. Docker
+
+If a `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `frontend/nginx/` or a project file changed, build the images (the build only, never `up`: the user's containers stay as they are):
+
+```sh
+docker compose --profile full build
+```
 
 ## 4. Working tree
 

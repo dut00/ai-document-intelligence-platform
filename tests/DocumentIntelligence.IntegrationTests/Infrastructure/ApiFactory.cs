@@ -53,6 +53,14 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     /// <inheritdoc cref="AuthPermitLimit"/>
     public const int UploadTokenLimit = 5;
 
+    /// <summary>
+    /// An address whose X-Forwarded-For header the API believes, as it would a reverse proxy's. It is
+    /// trusted as part of a network, the way the Docker "full" profile trusts the compose network.
+    /// </summary>
+    public const string TrustedProxyIp = "198.51.100.1";
+
+    private const string TrustedProxyNetwork = "198.51.100.0/24";
+
     private const int S3Port = 8333;
     private const string S3AccessKey = "test-access-key";
     private const string S3SecretKey = "test-secret-key";
@@ -202,6 +210,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("RateLimiting:UploadTokenLimit", UploadTokenLimit.ToString(CultureInfo.InvariantCulture));
         builder.UseSetting("RateLimiting:UploadTokensPerPeriod", "1");
         builder.UseSetting("RateLimiting:UploadReplenishmentPeriod", "01:00:00");
+        builder.UseSetting("ForwardedHeaders:KnownNetworks:0", TrustedProxyNetwork);
 
         builder.ConfigureTestServices(services =>
         {

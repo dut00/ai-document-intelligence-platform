@@ -14,6 +14,7 @@ dotnet run --project src/DocumentIntelligence.Api     # http://localhost:5080: S
 dotnet run --project src/DocumentIntelligence.Worker # fake analyzer unless a Claude key is set (below)
 (cd frontend && npm install && npm run dev)           # http://localhost:5173, proxies /api and /hubs to the API (API_URL overrides)
 (cd frontend && npm run lint && npm run build)        # oxlint, then tsc + vite build
+docker compose --profile full up -d --build           # everything in containers: http://localhost:8080 (nginx -> API; Scalar at /scalar)
 dotnet test --solution DocumentIntelligence.slnx
 dotnet test --project tests/DocumentIntelligence.UnitTests --filter-class "*LayerDependencyTests"
 dotnet user-secrets set Anthropic:ApiKey <key> --project src/DocumentIntelligence.Worker  # or ANTHROPIC_API_KEY
@@ -41,7 +42,10 @@ src/
 frontend/                               React + Vite + TS: api/ (fetch client, DTO types), auth/, realtime/ (SignalR), pages/, components/
 tests/                                  UnitTests, IntegrationTests
 docker/                                 container config (SeaweedFS S3 credentials)
+.github/workflows/ci.yml                build + tests, frontend lint + build, Docker image build
 ```
+
+Dockerfiles live next to their projects (`src/…Api`, `src/…Worker`, `frontend`); the .NET ones build from the repository root. In the `full` profile the API has no published port: nginx (`frontend/nginx/`) is the only entry point, which is why the API trusts `X-Forwarded-For` from the Docker networks (`ForwardedHeaders` settings).
 
 ## Naming conventions
 

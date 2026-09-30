@@ -1,0 +1,20 @@
+# Build context for the .NET images is the repository root; keep it to sources and build config.
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/TestResults/
+**/*.user
+.git/
+.github/
+.vs/
+.idea/
+.claude/
+.my-notes/
+.env
+.env.*
+!.env.example
+tests/
+docs/
+docker/
+frontend/

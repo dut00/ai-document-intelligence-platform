@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore DocumentIntelligence.slnx
+
+      # Warnings are errors (Directory.Build.props), so style violations fail here too.
+      - name: Build
+        run: dotnet build DocumentIntelligence.slnx --configuration Release --no-restore
+
+      # Integration tests start Postgres and SeaweedFS with Testcontainers, on the runner's Docker.
+      - name: Test
+        run: dotnet test --solution DocumentIntelligence.slnx --configuration Release --no-build
+
+  frontend:
+    name: Frontend lint and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  docker:
+    name: Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Compose reads .env for variable substitution, even when only building.
+      - run: cp .env.example .env
+
+      - name: Build the "full" profile
+        run: docker compose --profile full build

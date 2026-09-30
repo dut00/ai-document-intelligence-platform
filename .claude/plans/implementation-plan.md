@@ -126,11 +126,30 @@ README.md
 
 ## Docker
 - `docker-compose.yml` runs postgres:17, rabbitmq:4-management, chrislusf/seaweedfs (S3 API, credentials in `docker/seaweedfs/s3.json`; the app creates the bucket on startup) and aspire-dashboard.
-- The `full` profile adds api, worker and ui (nginx serves the UI build and proxies to the API).
+- The `full` profile adds api, worker and ui, all at http://localhost:8080.
+  - The API runs in the Production environment, with migrations (`Database:MigrateOnStartup`) and Scalar (`OpenApi:Enabled`) switched on explicitly. The JWT signing key comes from `JWT_SIGNING_KEY` in `.env`.
+  - Start order: the API waits for healthy Postgres, RabbitMQ and SeaweedFS. The Worker waits for a healthy API, which means the migrations are applied. The ui waits for the API too.
+  - The API's health check calls `/health/live` through bash's `/dev/tcp`, because the runtime image has no curl.
+  - The connection string sets `Gss Encryption Mode=Disable`: the image has no Kerberos library, and without it Npgsql logs an error probing for one.
 - Multi-stage Dockerfiles live in `src/…Api`, `src/…Worker` and `frontend`.
+  - The .NET images build from the repository root: restore from the project files first, for layer caching, then publish. They run on `aspnet:10.0` as the non-root `app` user; the Worker needs the ASP.NET Core runtime for Identity.
+  - The UI image builds with `node:24-alpine` and serves the result with `nginx-unprivileged` (non-root, port 8080).
+- nginx (`frontend/nginx/`):
+  - It serves the SPA with an `index.html` fallback. `index.html` is sent with `no-cache` and the hashed `/assets/` are cached as immutable. Both get a CSP, nosniff and no-referrer. The CSP is not applied to proxied responses, since Scalar needs inline scripts.
+  - It proxies `/api`, `/hubs` (WebSocket upgrade), `/scalar`, `/openapi` and `/health/live`. It does not proxy `/health/ready`, whose report lists every dependency and its state.
+  - It re-resolves `api` through Docker DNS, so a restarted API container is found again.
+  - Uploads are capped at 12 MB, leaving the 10 MB limit to the API.
+  - The access log omits the query string, which on `/hubs` carries the access token. The error log always writes the full request line, so on `/hubs` it is lowered to `crit`.
 - Config comes from `.env` (copied from `.env.example`). Local secrets live in `dotnet user-secrets` or `.env`.
 - The API applies migrations on startup in Development.
-- Behind nginx every request comes from the proxy's address, so the API must use forwarded headers (trusting only the proxy) before the per-IP auth rate limit means anything.
+- Forwarded headers: behind nginx every request comes from the proxy's address.
+  - The API reads `X-Forwarded-For`/`X-Forwarded-Proto` only from the proxies listed in `ForwardedHeaders:KnownProxies`/`KnownNetworks` (loopback always) and takes only the last hop (`ForwardLimit = 1`). nginx overwrites the header with `$remote_addr` rather than appending to it.
+  - The API has no published port in the `full` profile, so only containers on the compose network can reach it. That makes it safe to trust Docker's default address pools (`172.16.0.0/12`, `192.168.0.0/16`).
+  - Integration tests cover a proxy trusted through `KnownNetworks`, as in compose, where each forwarded client gets its own limit, and an untrusted sender, whose header is ignored.
+- CI (`.github/workflows/ci.yml`) has three jobs, on pushes to `master` and on pull requests:
+  - the backend: Release build and all tests, with Testcontainers on the runner's Docker;
+  - the frontend: `npm ci`, lint, build;
+  - `docker compose --profile full build`.
 
 ## Tests
 - **Unit:**

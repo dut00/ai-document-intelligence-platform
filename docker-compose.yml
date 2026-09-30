@@ -1,8 +1,21 @@
 # Local infrastructure. Copy .env.example to .env first.
 #   docker compose up -d                        -> Postgres, RabbitMQ, SeaweedFS (S3), Aspire Dashboard
-#   docker compose --profile full up --build    -> additionally api, worker and ui (added in a later step)
+#   docker compose --profile full up --build    -> additionally api, worker and ui: the app at http://localhost:8080
 
 name: document-intelligence
+
+# Settings the API and the Worker share in the "full" profile; the rest comes from their appsettings.json.
+x-app-environment: &app-environment
+  DOTNET_ENVIRONMENT: Production
+  ASPNETCORE_ENVIRONMENT: Production
+  # The runtime image has no Kerberos library; without this Npgsql logs an error probing for it.
+  ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Gss Encryption Mode=Disable
+  ConnectionStrings__RabbitMq: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+  Storage__ServiceUrl: http://seaweedfs:8333
+  Storage__AccessKey: ${S3_ACCESS_KEY}
+  Storage__SecretKey: ${S3_SECRET_KEY}
+  Storage__BucketName: ${S3_BUCKET}
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
 
 services:
   postgres:
@@ -47,6 +60,12 @@ services:
     volumes:
       - seaweedfs-data:/data
       - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      # Any HTTP answer (403 for an anonymous request) means the S3 gateway is serving.
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://127.0.0.1:8333/"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   # Receives OTLP traces, metrics and logs; UI at http://localhost:18888
   aspire-dashboard:
@@ -57,6 +76,57 @@ services:
     ports:
       - "18888:18888" # dashboard UI
       - "4317:18889"  # OTLP gRPC
+
+  # Profile "full": the application itself, built from source.
+
+  # No published port: only nginx (ui) reaches it, which is what makes trusting the Docker networks'
+  # address ranges for X-Forwarded-For safe. Scalar is at http://localhost:8080/scalar.
+  api:
+    profiles: [full]
+    build:
+      context: .
+      dockerfile: src/DocumentIntelligence.Api/Dockerfile
+    environment:
+      <<: *app-environment
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:-}
+      Database__MigrateOnStartup: "true"
+      OpenApi__Enabled: "true"
+      # Docker's default address pools; the client address then comes from nginx.
+      ForwardedHeaders__KnownNetworks__0: 172.16.0.0/12
+      ForwardedHeaders__KnownNetworks__1: 192.168.0.0/16
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    profiles: [full]
+    build:
+      context: .
+      dockerfile: src/DocumentIntelligence.Worker/Dockerfile
+    environment:
+      <<: *app-environment
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      # The API applies the migrations; it reports healthy only once they are done.
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # nginx: serves the UI build and proxies /api, /hubs and /scalar to the API.
+  ui:
+    profiles: [full]
+    build: frontend
+    ports:
+      - "8080:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres-data:
