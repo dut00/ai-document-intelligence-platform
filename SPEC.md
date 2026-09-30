@@ -40,4 +40,4 @@ docs/       architecture.md, decisions.md (ADRs), ai-development.md
 **Tests:** xUnit, NSubstitute, Shouldly.
 - Unit: `Document` aggregate and value objects, validators, upload validation, JWT/refresh rotation, consumer (idempotency, error types, Nager.Date failure), `DateInsightsService`, holiday provider, Claude response parsing.
 - Integration: `WebApplicationFactory` + Testcontainers (Postgres, SeaweedFS) + MassTransit in-memory test harness, fake AI — auth flow, authorization (401/404), full upload → processing → download → delete.
-- CI: `dotnet build/test` and `npm ci && npm run lint && npm run build`.
+- CI: `dotnet build/test`, `npm ci && npm run lint && npm run build`, known-vulnerability audits of NuGet and npm packages, and the Docker image build. Dependabot opens weekly update pull requests.

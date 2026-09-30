@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Reviews uncommitted changes (or a given commit range) for design, correctness, security and test gaps that the build and tests cannot catch. Use after /precommit passes and before committing. Read-only: reports findings, never edits.
+description: Reviews uncommitted changes (or a given commit range) for design, correctness, consistency and test gaps that the build and tests cannot catch (deep security review is the security-reviewer agent). Use after /precommit passes and before committing. Read-only: reports findings, never edits.
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -25,11 +25,7 @@ Layer dependencies are enforced by `LayerDependencyTests` and naming by the anal
 1. **Domain.** Invariants live in the aggregates (`src/DocumentIntelligence.Domain`), not in handlers. State changes go through domain methods, which raise domain events where the rest of the system relies on them. No public setters or invalid states reachable from outside.
 2. **CQRS and errors.** Expected business failures return `Result` / `Result<T>` (`Application/Abstractions/Results`); exceptions are for unexpected failures. Every command that takes input has a validator. Handlers stay thin and do not duplicate domain rules.
 3. **Messaging and consistency.** Consumers are idempotent and safe under MassTransit retries and redelivery. Side effects happen inside the outbox transaction or tolerate replays. Optimistic concurrency (`xmin`) conflicts are handled. A message that can never succeed fails fast instead of burning retries, and a poison message ends in the `_error` queue with the document marked Failed.
-4. **Security.**
-   - Every query and command on a document checks the owner (`OwnerId`); a missing or foreign document returns the same not-found result.
-   - No secrets, tokens, document content or personal data in responses, logs or exceptions.
-   - Document text sent to Claude is treated as untrusted data (prompt injection); the model output is validated before use.
-   - Uploads are limited in size and content type.
+4. **Security (basics only).** The full checklist belongs to the `security-reviewer` agent. Here, flag only what you notice while reviewing: a document query or command without an `OwnerId` check; secrets, tokens, document content or personal data leaking into responses, logs or exceptions; model output used without validation. If the change touches any area in `CLAUDE.md`'s `security-reviewer` trigger list, say so in the verdict.
 5. **EF Core and performance.** No N+1 queries, no unbounded lists without paging, `AsNoTracking` for reads, cancellation tokens passed through, no sync-over-async.
 6. **Tests.** New behavior has tests, including failure paths and edge cases, not only the happy path. Tests assert behavior, not implementation details. Integration tests do not depend on timing without polling.
 7. **Plan and docs.** The change matches the plan. If it deliberately departs from it, the plan, `SPEC.md` or `CLAUDE.md` are updated in the same change.

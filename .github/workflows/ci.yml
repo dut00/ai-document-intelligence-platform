@@ -26,6 +26,18 @@ jobs:
       - name: Restore
         run: dotnet restore DocumentIntelligence.slnx
 
+      # Known vulnerabilities in direct and transitive packages. The command exits 0 even when it finds
+      # some, so the JSON report is checked; `shell: bash` adds pipefail, and a failing command fails the step.
+      - name: Audit packages
+        shell: bash
+        run: |
+          dotnet list DocumentIntelligence.slnx package --vulnerable --include-transitive --format json > package-audit.json
+          cat package-audit.json
+          if grep -q '"vulnerabilities"' package-audit.json; then
+            echo "::error::Vulnerable NuGet packages found (see the report above)."
+            exit 1
+          fi
+
       # Warnings are errors (Directory.Build.props), so style violations fail here too.
       - name: Build
         run: dotnet build DocumentIntelligence.slnx --configuration Release --no-restore
@@ -50,6 +62,8 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - run: npm ci
+      # Runtime dependencies only: dev tooling never reaches the browser bundle's users.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npm run build
 

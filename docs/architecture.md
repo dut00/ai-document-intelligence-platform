@@ -218,4 +218,4 @@ flowchart LR
 | Unit | the aggregate and value objects, the validation decorator, `AnalysisResultValidator`, upload validation, the JWT issuer, `ProcessDocumentCommandHandler` (idempotency, permanent vs transient errors, a calendar outage), `DateInsightsService`, the Nager.Date provider with a fake handler, parsing in the Claude analyzer, layer dependencies |
 | Integration | the real API in memory (`WebApplicationFactory`), with Postgres and SeaweedFS in Testcontainers and the MassTransit test harness running the Worker's consumers: the auth flow including rotation, reuse and the grace period; ownership (401/404); upload to `Completed` to download to delete; failures and retries to `Fault`; SignalR delivery to the owner only; rate limits and forwarded headers; health |
 
-CI (`.github/workflows/ci.yml`) runs the backend build and tests, the frontend lint and build, and the Docker image build.
+CI (`.github/workflows/ci.yml`) runs the backend build and tests, the frontend lint and build, and the Docker image build. It also fails on known-vulnerable NuGet or npm (runtime) packages. Dependabot (`.github/dependabot.yml`) opens weekly, grouped update pull requests.

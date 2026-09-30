@@ -13,7 +13,8 @@ The whole project was built in conversation with Claude Code: the plan, the code
 4. **One step per prompt, one commit per step.** The implementation followed the plan's order, each step started with a short prompt ("go to step 3 of the plan"), and it was committed only after the checks below.
 5. **A check skill and a reviewer agent** (added after step 4, on the author's suggestion):
    - [`/precommit`](../.claude/skills/precommit/SKILL.md) builds the solution, runs all unit and integration tests, lints and builds the frontend, builds the Docker images when their inputs changed, and checks the working tree (line endings, stray files). It runs in a forked context, so its long logs stay out of the conversation.
-   - The [`reviewer`](../.claude/agents/reviewer.md) agent then reviews the change read-only, with fresh context, for design, correctness, security and test gaps. It must back every finding with a concrete scenario.
+   - The [`reviewer`](../.claude/agents/reviewer.md) agent then reviews the change read-only, with fresh context, for design, correctness and test gaps. It must back every finding with a concrete scenario.
+   - Security was split out later, once the project was finished. The mechanical checks (the NuGet and npm vulnerability audits and a secret scan of the change) run in `/precommit` and in CI, and Dependabot keeps dependencies current. The judgment part went to a separate [`security-reviewer`](../.claude/agents/security-reviewer.md) agent. It has a threat-model checklist written for this repository (tokens, ownership, uploads, prompt injection, SSRF, DoS, data exposure, containers) and runs on security-relevant changes and as a whole-repository audit.
 6. **Manual verification** where tests cannot reach:
    - the real stack in local Docker (RabbitMQ, Nager.Date);
    - the UI driven in Chrome, including two tabs signing in and out;

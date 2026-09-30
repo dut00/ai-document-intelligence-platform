@@ -170,6 +170,11 @@ README.md
   - Rate limiting: auth per client IP (the test server assigns each request a random IP unless a test pins one), upload per user.
   - Health: readiness reports Postgres, storage and the bus; liveness depends on nothing external.
 - **CI** (`.github/workflows/ci.yml`): `dotnet build/test` (Testcontainers runs on ubuntu-latest) and `npm ci && npm run lint && npm run build` for the frontend.
+- **Security:**
+  - CI and `/precommit` fail on known-vulnerable packages: `dotnet list package --vulnerable --include-transitive`, and `npm audit --omit=dev --audit-level=high`.
+  - `/precommit` also scans the change for secrets.
+  - Dependabot opens weekly, grouped update pull requests for NuGet, npm, Docker images in the Dockerfiles and `docker-compose.yml` (minor and patch updates only) and GitHub Actions.
+  - The `security-reviewer` agent reviews security-relevant changes and audits the whole repository on request.
 
 ## Implementation order
 0. Housekeeping: save an English feedback memory ("all project files, plans and memory in English; user writes in Polish"), then copy this plan to `.claude/plans/implementation-plan.md` in the repo (committed; the source of truth from then on).
