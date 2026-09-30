@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Design decisions and implementation order: `.claude/plans/implementation-plan.md` (summary in `SPEC.md`). All files are in English.
+Design decisions and implementation order: `.claude/plans/implementation-plan.md` (summary in `SPEC.md`). Public docs: `README.md` and `docs/`; when a change alters the architecture or a decision, update `docs/architecture.md` or add or amend an ADR in `docs/decisions.md`. All files are in English.
 
 ## Commands
 
@@ -42,6 +42,7 @@ src/
 frontend/                               React + Vite + TS: api/ (fetch client, DTO types), auth/, realtime/ (SignalR), pages/, components/
 tests/                                  UnitTests, IntegrationTests
 docker/                                 container config (SeaweedFS S3 credentials)
+docs/                                   architecture.md, decisions.md (ADRs), ai-development.md
 .github/workflows/ci.yml                build + tests, frontend lint + build, Docker image build
 ```
 
