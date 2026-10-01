@@ -12,6 +12,10 @@ updates:
     groups:
       nuget:
         patterns: ["*"]
+    ignore:
+      # MassTransit v9 and later need a commercial license; stay on v8.
+      - dependency-name: "MassTransit*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: /frontend
@@ -20,8 +24,12 @@ updates:
     groups:
       npm:
         patterns: ["*"]
+    ignore:
+      # Types follow the Node version the project runs on (Node 24 in the Dockerfile and CI).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
-  # Base images stay on their major lines (.NET 10, Node 24, nginx 1.x); major upgrades are deliberate.
+  # Base images stay on their major lines (.NET 10, Node 24 LTS, nginx 1.x); major upgrades are deliberate.
   - package-ecosystem: docker
     directories:
       - /src/DocumentIntelligence.Api
