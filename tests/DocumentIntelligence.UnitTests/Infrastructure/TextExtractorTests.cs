@@ -173,6 +173,28 @@ public sealed class TextExtractorTests
     }
 
     [Fact]
+    public async Task Parse_abandoned_by_the_caller_also_stops_the_worker_when_stuck()
+    {
+        using var parsers = new SemaphoreSlim(1, 1);
+        using var unblock = new ManualResetEventSlim();
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+        var time = new FakeTimeProvider();
+        var stuck = new TaskCompletionSource();
+        var extractor = Extractor(parsers, time, (_, _, _) => { unblock.Wait(); return string.Empty; }, () => stuck.TrySetResult());
+
+        var extracting = extractor.ExtractTextAsync(new MemoryStream([1]), MaxCharacters, _timeout, caller.Token);
+        await caller.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => extracting);
+        parsers.CurrentCount.ShouldBe(0);
+
+        time.Advance(PdfTextExtractor.StuckParseLimit);
+        await stuck.Task.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken);
+
+        unblock.Set();
+    }
+
+    [Fact]
     public async Task Worker_is_killed_only_if_the_graceful_stop_does_not_end_it()
     {
         using var parsers = new SemaphoreSlim(1, 1);

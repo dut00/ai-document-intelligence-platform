@@ -14,8 +14,8 @@ namespace DocumentIntelligence.Infrastructure.TextExtraction;
 /// </summary>
 /// <remarks>
 /// PdfPig is synchronous and cannot be interrupted inside a page (or while opening the file), so each parse
-/// runs on its own thread and the caller stops waiting at the timeout: the consumer slot is freed and the
-/// document fails. The abandoned parse ends at its next page check, keeping its parser permit until then.
+/// runs on its own thread and the caller stops waiting at the timeout (the consumer slot is freed and the
+/// document fails) or when it cancels. The abandoned parse ends at its next page check, keeping its parser permit until then.
 /// A parse still running <see cref="StuckParseLimit"/> after it was abandoned will not end on its own, and
 /// recycling the process is the only way to stop it. The Worker is then stopped gracefully: it takes no
 /// new messages and lets the documents in hand finish, so no innocent document is interrupted (or, on
@@ -110,10 +110,18 @@ internal sealed partial class PdfTextExtractor(
         {
             return await parsing.WaitAsync(linked.Token);
         }
-        catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (linked.IsCancellationRequested)
         {
+            // Abandoned at the timeout or by the caller (the processing deadline, a stopping consumer): either
+            // way the parse may go on, and a stuck one must still get the process recycled.
             _ = WatchAbandonedParseAsync(parsing);
-            throw new TimeoutException("Parsing the PDF took longer than allowed.");
+
+            if (timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException("Parsing the PDF took longer than allowed.");
+            }
+
+            throw;
         }
     }
 
