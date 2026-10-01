@@ -20,7 +20,14 @@ namespace DocumentIntelligence.Application.Documents.Processing;
 /// <see cref="ProcessingOutcome.Failed"/>. Any other exception, including a concurrency conflict on
 /// save, propagates so the caller can retry.
 /// </remarks>
-public sealed record ProcessDocumentCommand(DocumentId DocumentId) : ICommand<ProcessingOutcome>;
+public sealed record ProcessDocumentCommand(DocumentId DocumentId) : ICommand<ProcessingOutcome>
+{
+    /// <summary>
+    /// The longest one attempt may take: extraction plus the AI call (with the SDK's retries and the one
+    /// correction round). A Worker that is stopping waits this long for the documents in hand.
+    /// </summary>
+    public static readonly TimeSpan ProcessingDeadline = TimeSpan.FromMinutes(5);
+}
 
 internal sealed partial class ProcessDocumentCommandHandler(
     IDocumentRepository documents,
@@ -78,13 +85,22 @@ internal sealed partial class ProcessDocumentCommandHandler(
         // the final save still rejects the outcome if the document changed or was deleted meanwhile.
         document.StartProcessing(timeProvider.GetUtcNow(), StaleProcessingTimeout);
 
+        // One overall deadline for the slow part, so a Worker that is stopping knows how long it may have to
+        // wait for a document in hand (see WorkerConsumers). Missing it is transient: the message is retried.
+        using var deadline = new CancellationTokenSource(ProcessDocumentCommand.ProcessingDeadline, timeProvider);
+        using var work = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+
         DocumentAnalysis analysis;
         try
         {
-            var text = await ExtractTextAsync(document, cancellationToken);
-            await ReserveAnalysisAsync(document, cancellationToken);
-            var result = await AnalyzeAsync(text, cancellationToken);
-            analysis = await CreateAnalysisAsync(document.Id, result, cancellationToken);
+            var text = await ExtractTextAsync(document, work.Token);
+            await ReserveAnalysisAsync(document, work.Token);
+            var result = await AnalyzeAsync(text, work.Token);
+            analysis = await CreateAnalysisAsync(document.Id, result, work.Token);
+        }
+        catch (OperationCanceledException exception) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"Processing document {document.Id} took longer than {ProcessDocumentCommand.ProcessingDeadline}.", exception);
         }
         catch (UnprocessableDocumentException exception)
         {

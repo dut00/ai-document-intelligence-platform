@@ -2,6 +2,7 @@ using DocumentIntelligence.Application;
 using DocumentIntelligence.Infrastructure;
 using DocumentIntelligence.ServiceDefaults;
 using DocumentIntelligence.Worker.Consumers;
+using MassTransit;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -9,8 +10,14 @@ builder.AddServiceDefaults();
 
 var role = builder.Configuration.GetValue(WorkerConsumers.RoleSetting, WorkerRole.All);
 
-// On shutdown the bus waits for the documents in hand (an AI call may take up to 2 minutes): a message
-// returned unfinished would count as an interrupted delivery, as if this document had crashed the Worker.
+// On shutdown the documents in hand are allowed to finish: a message returned unfinished would count as an
+// interrupted delivery, as if this document had crashed the Worker. MassTransit cancels the consumers'
+// tokens after ConsumerStopTimeout, and the host gives it that long and more.
+builder.Services.Configure<MassTransitHostOptions>(options =>
+{
+    options.ConsumerStopTimeout = WorkerConsumers.ConsumerStopTimeout;
+    options.StopTimeout = WorkerConsumers.ConsumerStopTimeout + TimeSpan.FromSeconds(15);
+});
 builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = WorkerConsumers.ShutdownTimeout);
 
 builder.Services

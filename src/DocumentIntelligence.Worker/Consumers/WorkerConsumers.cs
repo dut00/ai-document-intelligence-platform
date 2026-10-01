@@ -1,3 +1,4 @@
+using DocumentIntelligence.Application.Documents.Processing;
 using MassTransit;
 
 namespace DocumentIntelligence.Worker.Consumers;
@@ -10,9 +11,16 @@ public static class WorkerConsumers
     public const string RoleSetting = "Worker:Role";
 
     /// <summary>
-    /// Longer than one analysis; the containers' stop grace period is longer still.
+    /// How long a stopping Worker lets the documents in hand finish before cancelling them: longer than
+    /// one attempt may take (<see cref="ProcessDocumentCommand.ProcessingDeadline"/>).
     /// </summary>
-    public static readonly TimeSpan ShutdownTimeout = TimeSpan.FromMinutes(2.5);
+    public static readonly TimeSpan ConsumerStopTimeout = ProcessDocumentCommand.ProcessingDeadline + TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// The host's own shutdown limit, above <see cref="ConsumerStopTimeout"/>; the containers' stop grace
+    /// period (docker-compose.yml) is longer still.
+    /// </summary>
+    public static readonly TimeSpan ShutdownTimeout = ConsumerStopTimeout + TimeSpan.FromMinutes(1);
 
     public static IBusRegistrationConfigurator AddWorkerConsumers(this IBusRegistrationConfigurator bus, WorkerRole role = WorkerRole.All)
     {

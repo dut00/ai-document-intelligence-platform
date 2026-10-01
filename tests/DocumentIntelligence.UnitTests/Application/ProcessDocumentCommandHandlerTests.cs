@@ -332,6 +332,25 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
     }
 
     [Fact]
+    public async Task Attempt_past_the_processing_deadline_is_transient()
+    {
+        _analyzer.AnalyzeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                await Task.Delay(Timeout.Infinite, call.ArgAt<CancellationToken>(1));
+                return AnalysisResult();
+            });
+        var document = Stored(PendingDocument());
+
+        var processing = ProcessAsync(document);
+        _time.Advance(ProcessDocumentCommand.ProcessingDeadline);
+
+        // Retried by the message pipeline, not failed: a slow AI service is a transient problem.
+        await Should.ThrowAsync<TimeoutException>(() => processing);
+        document.Status.ShouldNotBe(DocumentStatus.Failed);
+    }
+
+    [Fact]
     public async Task Long_text_is_truncated_before_analysis()
     {
         _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
