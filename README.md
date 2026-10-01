@@ -149,7 +149,7 @@ Settings come from `appsettings.json`, from environment variables (`Section__Key
 | `Anthropic:Model`, `MaxTokens`, `Timeout`, `MaxRetries` | Haiku 4.5, 4096, 2 min, 2 | the Claude request |
 | `Holidays:CountryCode`, `BaseUrl`, `CacheDuration` | `PL`, Nager.Date, 24 h | the calendar check |
 | `Messaging:Retry:*` | 5 retries, 1 s to 30 s | exponential message retry before the DLQ |
-| `RateLimiting:*` | 20 auth requests/min and 10 registrations/day per IP; 5 login attempts without a success per account and IP in 15 min; 10 uploads, then 2/min per user | rate limits |
+| `RateLimiting:*` | 20 auth requests/min and 10 registrations/day per IP; 5 login attempts without a success per account and IP in 15 min, and a 3 s delay per attempt beyond 50 for an account from all addresses; 10 uploads, then 2/min per user | rate limits |
 | `Documents:MaxDocumentsPerUser`, `DailyAnalysisLimitPerUser`, `DailyAnalysisLimit` | 200, 20, 500 | storage quota per user; AI analyses per user and across all users in 24 h |
 | `ForwardedHeaders:KnownProxies` / `KnownNetworks` | none (loopback only) | proxies trusted for `X-Forwarded-For` |
 | `OpenApi:Enabled`, `Database:MigrateOnStartup` | on in Development | Scalar UI and migrations outside Development |

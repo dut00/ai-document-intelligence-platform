@@ -65,6 +65,14 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     public const int LoginAttemptsPerAccount = 3;
 
     /// <summary>
+    /// Login attempts for one account from all addresses together before each further one is delayed
+    /// by <see cref="LoginOverBudgetDelay"/>.
+    /// </summary>
+    public const int LoginAttemptsPerAccountOverall = 4;
+
+    public static readonly TimeSpan LoginOverBudgetDelay = TimeSpan.FromSeconds(1);
+
+    /// <summary>
     /// An address whose X-Forwarded-For header the API believes, as it would a reverse proxy's. It is
     /// trusted as part of a network, the way the Docker "full" profile trusts the compose network.
     /// </summary>
@@ -221,6 +229,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("RateLimiting:UploadTokenLimit", UploadTokenLimit.ToString(CultureInfo.InvariantCulture));
         builder.UseSetting("RateLimiting:RegisterPermitLimit", RegisterPermitLimit.ToString(CultureInfo.InvariantCulture));
         builder.UseSetting("RateLimiting:LoginAttemptsPerAccount", LoginAttemptsPerAccount.ToString(CultureInfo.InvariantCulture));
+        builder.UseSetting("RateLimiting:LoginAttemptsPerAccountOverall", LoginAttemptsPerAccountOverall.ToString(CultureInfo.InvariantCulture));
+        builder.UseSetting("RateLimiting:LoginOverBudgetDelay", LoginOverBudgetDelay.ToString("c", CultureInfo.InvariantCulture));
         builder.UseSetting("RateLimiting:UploadTokensPerPeriod", "1");
         builder.UseSetting("RateLimiting:UploadReplenishmentPeriod", "01:00:00");
         builder.UseSetting("ForwardedHeaders:KnownNetworks:0", TrustedProxyNetwork);

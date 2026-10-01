@@ -68,13 +68,14 @@ internal static class AuthEndpoints
         LoginCommand command,
         ICommandHandler<LoginCommand, AuthTokens> handler,
         LoginAttemptThrottle throttle,
+        TimeProvider timeProvider,
         HttpContext context,
         CancellationToken cancellationToken)
     {
         var client = context.Connection.RemoteIpAddress;
 
         // Refused before the password is checked, so the answer says nothing about whether it was right.
-        if (!throttle.TryBeginAttempt(client, command.Email, out var retryAfter))
+        if (!throttle.TryBeginAttempt(client, command.Email, out var retryAfter, out var delay))
         {
             context.Response.Headers.RetryAfter = ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
 
@@ -82,6 +83,11 @@ internal static class AuthEndpoints
                 statusCode: StatusCodes.Status429TooManyRequests,
                 title: "Too many requests.",
                 detail: "Too many failed sign-in attempts for this account. Try again later.");
+        }
+
+        if (delay > TimeSpan.Zero)
+        {
+            await Task.Delay(delay, timeProvider, cancellationToken);
         }
 
         var result = await handler.HandleAsync(command, cancellationToken);

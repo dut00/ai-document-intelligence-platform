@@ -34,11 +34,14 @@ internal sealed class LoginAttemptThrottle(
     private static readonly Lock _gate = new();
 
     /// <summary>
-    /// Counts an attempt, or refuses it when the budget for this address and account is used up.
+    /// Counts an attempt, or refuses it when the budget for this address and account is used up. When the
+    /// account's budget across all addresses is used up, <paramref name="delay"/> says how long to wait
+    /// before checking the password.
     /// </summary>
-    public bool TryBeginAttempt(IPAddress? client, string? email, out TimeSpan retryAfter)
+    public bool TryBeginAttempt(IPAddress? client, string? email, out TimeSpan retryAfter, out TimeSpan delay)
     {
         retryAfter = TimeSpan.Zero;
+        delay = TimeSpan.Zero;
 
         // Without a plausible email the request fails validation and checks no password: nothing to
         // throttle, and nothing of an arbitrarily long string is kept in memory.
@@ -47,9 +50,16 @@ internal sealed class LoginAttemptThrottle(
             return true;
         }
 
-        var attempts = GetOrCreate(Key(client, email));
+        var attempts = GetOrCreate(ClientKey(client, email));
         if (attempts.Increment() <= options.Value.LoginAttemptsPerAccount)
         {
+            // Many addresses each within their own budget: slow every attempt down rather than lock the
+            // account, which would let anyone lock its owner out.
+            if (GetOrCreate(AccountKey(email)).Increment() > options.Value.LoginAttemptsPerAccountOverall)
+            {
+                delay = options.Value.LoginOverBudgetDelay;
+            }
+
             return true;
         }
 
@@ -61,7 +71,8 @@ internal sealed class LoginAttemptThrottle(
     {
         if (email.Length <= MaxEmailLength)
         {
-            cache.Remove(Key(client, email));
+            cache.Remove(ClientKey(client, email));
+            cache.Remove(AccountKey(email));
         }
     }
 
@@ -82,12 +93,16 @@ internal sealed class LoginAttemptThrottle(
 
     // Normalized the way Identity looks the account up, so Unicode look-alikes of one email (e.g. the
     // Kelvin sign for "K") share its budget; hashed, so every key has the same small size.
-    private string Key(IPAddress? client, string email)
+    private string ClientKey(IPAddress? client, string email) =>
+        string.Create(CultureInfo.InvariantCulture, $"login-attempts:{ClientPartition.For(client)}:{AccountHash(email)}");
+
+    private string AccountKey(string email) => $"login-attempts:all:{AccountHash(email)}";
+
+    private string AccountHash(string email)
     {
         var normalized = normalizer.NormalizeEmail(email.Trim()) ?? string.Empty;
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
 
-        return string.Create(CultureInfo.InvariantCulture, $"login-attempts:{ClientPartition.For(client)}:{hash}");
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
     }
 
     private sealed class Attempts(DateTimeOffset windowEnd)

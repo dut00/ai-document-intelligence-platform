@@ -35,6 +35,18 @@ public sealed class RateLimitingOptions
     public TimeSpan LoginAttemptWindow { get; init; } = TimeSpan.FromMinutes(15);
 
     /// <summary>
+    /// Login attempts without a success for one account from all addresses together within
+    /// <see cref="LoginAttemptWindow"/>. Beyond it, every attempt for the account waits
+    /// <see cref="LoginOverBudgetDelay"/> before the password is checked: guessing from many addresses is
+    /// slowed down, while the owner, unlike with a lockout, can still sign in.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int LoginAttemptsPerAccountOverall { get; init; } = 50;
+
+    [Range(typeof(TimeSpan), "00:00:00", "00:00:30")]
+    public TimeSpan LoginOverBudgetDelay { get; init; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>
     /// Uploads a user can make in a burst; every upload costs an AI analysis.
     /// </summary>
     [Range(1, int.MaxValue)]

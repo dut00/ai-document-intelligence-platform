@@ -330,6 +330,7 @@ A crash of the Worker process never reaches this policy. The endpoints therefore
   - Each attempt is counted before the password is checked, so concurrent guesses cannot slip past it. After 5 attempts without a success for an account from one IP address within 15 minutes, that address is refused; the owner, on another address, is not affected.
   - The key is a hash of the email as Identity normalizes it, so Unicode look-alikes share a budget and no attacker-sized string is kept.
   - IPv6 clients are counted per /64 prefix, here and in the rate limits.
+  - Across all addresses, an account gets 50 attempts without a success per 15 minutes; beyond that each attempt is delayed by 3 seconds rather than refused, so the owner can still sign in.
 - **AI output.** Any tag variant that could open or close the `<document>` block is defused with a non-backtracking regular expression (linear time on hostile input). Logs record only where the analysis was invalid, not the values.
 - **Input.** `page` has an upper bound, so the row offset cannot overflow.
 
@@ -340,6 +341,7 @@ A crash of the Worker process never reaches this policy. The endpoints therefore
 - A deploy or restart counts as an interruption only if it kills a Worker mid-document: Workers finish the documents in hand on shutdown (2.5 minutes), and fetch no more than they process. A broker connection drop still counts.
 - A process-level crash inside the PDF parser (e.g. a stack overflow) still kills the Worker, but now only 3 times per document, and documents that were merely in flight are processed again rather than failed.
 - An abandoned PDF parse keeps a thread busy until its next page check. At most 4 parses run at once per Worker process (more PDFs wait and are retried), and the containers have CPU and memory limits.
+- Without a lockout, an attacker with very many addresses can still guess in parallel: the account-wide delay slows each attempt, not the number running at once. A stronger defense (MFA, CAPTCHA) is out of scope.
 - A busy user can exhaust their own daily allowance, and many accounts from many addresses can still exhaust the overall one: that is the price of a hard cost ceiling.
 
 **Alternatives.**

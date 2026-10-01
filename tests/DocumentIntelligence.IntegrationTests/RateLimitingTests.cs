@@ -120,6 +120,29 @@ public sealed class RateLimitingTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task Logins_for_one_account_from_many_addresses_are_slowed_down_but_not_locked()
+    {
+        var email = $"user-{Guid.NewGuid():N}@example.com";
+        (await factory.CreateClient().PostAsJsonAsync("/api/auth/register", new { email, password = ApiFactory.Password }, CancellationToken))
+            .StatusCode.ShouldBe(HttpStatusCode.Created);
+
+        // Each address stays within its own budget; together they use up the account's.
+        for (var address = 0; address < ApiFactory.LoginAttemptsPerAccountOverall; address++)
+        {
+            using var guesser = ClientFrom($"203.0.113.{80 + address}");
+            (await LoginAsync(guesser, email: email)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        }
+
+        // The owner still signs in, only more slowly.
+        using var owner = ClientFrom("203.0.113.99");
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var response = await LoginAsync(owner, email: email, password: ApiFactory.Password);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        System.Diagnostics.Stopwatch.GetElapsedTime(started).ShouldBeGreaterThanOrEqualTo(ApiFactory.LoginOverBudgetDelay * 0.9);
+    }
+
+    [Fact]
     public async Task Unicode_look_alikes_of_an_email_share_its_login_attempts()
     {
         var email = $"kate-{Guid.NewGuid():N}@example.com";

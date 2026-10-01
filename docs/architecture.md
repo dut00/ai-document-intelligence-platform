@@ -154,6 +154,7 @@ A document without dates makes no calls. Dates spread over several years make on
 - **Accounts:** ASP.NET Core Identity (`AddIdentityCore`, no roles), with `Users` as the table name.
 - **Failed logins:** there is no account lockout, which would let anyone lock a known email out.
   - Instead, `LoginAttemptThrottle` counts each login attempt before the password is checked, keyed by a hash of the email as Identity normalizes it, and refuses a client IP address after 5 attempts without a success for one account within 15 minutes. Counting first means concurrent guesses cannot all slip in before the first failure is recorded. The owner, signing in from another address, is not affected.
+  - Across all addresses, an account gets 50 attempts without a success per 15 minutes; beyond that every attempt waits 3 seconds before the password is checked. That slows down guessing from many addresses without locking the owner out.
   - Registration is limited to 10 per IP address per day, so one address gets at most 10 x 20 analyses a day, well below the overall 500.
   - A login for an unknown email still verifies the password against a dummy hash, so its response time does not reveal whether the account exists.
   - Per-client limits count an IPv6 client by its /64 prefix, which one subscriber usually holds whole.
