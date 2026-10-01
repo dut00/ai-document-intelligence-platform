@@ -109,6 +109,17 @@ public sealed class TextExtractorTests
     }
 
     [Fact]
+    public async Task Leading_whitespace_is_skipped_on_a_stream_that_returns_short_reads()
+    {
+        var content = Encoding.UTF8.GetBytes(new string(' ', 70_000) + "Invoice 7/2026 " + new string('x', 200));
+
+        var text = await _text.ExtractTextAsync(new TrickleStream(content), maxCharacters: 100, CancellationToken);
+
+        text.ShouldStartWith("Invoice 7/2026");
+        text.Length.ShouldBe(101);
+    }
+
+    [Fact]
     public async Task Leading_blank_pdf_pages_do_not_use_up_the_text_budget()
     {
         var pages = Enumerable.Repeat(Array.Empty<string>(), 3).Append(["Invoice 7/2026"]).ToArray();

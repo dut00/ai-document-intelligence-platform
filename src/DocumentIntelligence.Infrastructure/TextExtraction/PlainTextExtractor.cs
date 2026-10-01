@@ -15,17 +15,23 @@ internal sealed class PlainTextExtractor : ITextExtractor
     {
         using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
 
-        // Leading whitespace would otherwise use up the budget and leave no text at all.
-        while (reader.Peek() is var next && next >= 0 && char.IsWhiteSpace((char)next))
+        // One character more than the limit tells the caller the text was cut. Leading whitespace is not
+        // counted: it would otherwise use up the budget and leave no text at all. Read in chunks rather
+        // than with Peek, which gives up on a network stream that returns a short read.
+        var text = new StringBuilder();
+        var chunk = new char[4096];
+        int read;
+        while (text.Length <= maxCharacters && (read = await reader.ReadAsync(chunk, cancellationToken)) > 0)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            reader.Read();
+            var span = chunk.AsSpan(0, read);
+            if (text.Length == 0)
+            {
+                span = span.TrimStart();
+            }
+
+            text.Append(span[..Math.Min(span.Length, maxCharacters + 1 - text.Length)]);
         }
 
-        // One character more than the limit tells the caller the text was cut.
-        var buffer = new char[maxCharacters + 1];
-        var length = await reader.ReadBlockAsync(buffer, cancellationToken);
-
-        return new string(buffer, 0, length);
+        return text.ToString();
     }
 }
