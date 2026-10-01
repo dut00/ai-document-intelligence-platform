@@ -26,6 +26,24 @@ The documents below are fictional; they were analyzed by `claude-haiku-4-5-20251
 
 ![Analysis of a service agreement: summary, important dates with weekend and holiday badges, entities, financial information and risks](docs/images/document-details.png)
 
+### Behind the scenes
+
+**Docker.** The `full` profile: the infrastructure, the API, the Worker and the UI, each in its own container.
+
+![Docker Desktop with the running containers of the full profile](docs/images/docker-desktop.png)
+
+**API reference.** Scalar UI, generated from the OpenAPI document, with a request builder for every endpoint.
+
+![Scalar UI with the auth and document endpoints](docs/images/api-scalar.png)
+
+**Observability.** The API and the Worker export traces, metrics and logs over OTLP to the Aspire Dashboard.
+
+![Aspire Dashboard with traces from the API and the Worker](docs/images/aspire-dashboard.png)
+
+**Messaging.** RabbitMQ management: the queues and consumers of the Worker and the API.
+
+![RabbitMQ management overview with message rates and global counts](docs/images/rabbitmq-management.png)
+
 ## How it works
 
 ```mermaid
