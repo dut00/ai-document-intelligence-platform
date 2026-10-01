@@ -12,7 +12,8 @@ var role = builder.Configuration.GetValue(WorkerConsumers.RoleSetting, WorkerRol
 
 // On shutdown the documents in hand are allowed to finish: a message returned unfinished would count as an
 // interrupted delivery, as if this document had crashed the Worker. MassTransit cancels the consumers'
-// tokens after ConsumerStopTimeout, and the host gives it that long and more.
+// tokens after ConsumerStopTimeout, and the host gives it that long and more. That covers one attempt, not a
+// message already in its in-process retries: several attempts can outlast it, and that message is returned.
 builder.Services.Configure<MassTransitHostOptions>(options =>
 {
     options.ConsumerStopTimeout = WorkerConsumers.ConsumerStopTimeout;
