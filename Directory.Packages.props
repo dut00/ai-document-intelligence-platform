@@ -6,7 +6,7 @@
   <ItemGroup Label="Hosting">
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
-    <PackageVersion Include="Scalar.AspNetCore" Version="2.17.11" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.17.12" />
   </ItemGroup>
 
   <ItemGroup Label="Application">
@@ -29,14 +29,14 @@
 
   <ItemGroup Label="Messaging and storage">
     <!-- MassTransit stays on v8: v9 requires a commercial license. -->
-    <PackageVersion Include="MassTransit" Version="8.5.10" />
-    <PackageVersion Include="MassTransit.RabbitMQ" Version="8.5.10" />
-    <PackageVersion Include="MassTransit.EntityFrameworkCore" Version="8.5.10" />
-    <PackageVersion Include="AWSSDK.S3" Version="4.0.103.4" />
+    <PackageVersion Include="MassTransit" Version="8.5.11" />
+    <PackageVersion Include="MassTransit.RabbitMQ" Version="8.5.11" />
+    <PackageVersion Include="MassTransit.EntityFrameworkCore" Version="8.5.11" />
+    <PackageVersion Include="AWSSDK.S3" Version="4.0.104" />
   </ItemGroup>
 
   <ItemGroup Label="Document processing">
-    <PackageVersion Include="Anthropic" Version="12.51.0" />
+    <PackageVersion Include="Anthropic" Version="12.53.0" />
     <PackageVersion Include="PdfPig" Version="0.1.16" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
   </ItemGroup>
