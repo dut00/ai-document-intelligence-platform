@@ -124,6 +124,9 @@ services:
       <<: *app-environment
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       Worker__Role: Main
+    # Time to finish the documents in hand (an AI call may take up to 2 minutes) before Docker kills the
+    # process: a message returned unfinished counts as an interrupted delivery.
+    stop_grace_period: 3m
     depends_on:
       # The API applies the migrations; it reports healthy only once they are done.
       api:
@@ -143,6 +146,7 @@ services:
       <<: *app-environment
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       Worker__Role: Isolated
+    stop_grace_period: 3m
     depends_on:
       api:
         condition: service_healthy

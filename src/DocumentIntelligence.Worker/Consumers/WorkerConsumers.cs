@@ -9,6 +9,11 @@ public static class WorkerConsumers
 {
     public const string RoleSetting = "Worker:Role";
 
+    /// <summary>
+    /// Longer than one analysis; the containers' stop grace period is longer still.
+    /// </summary>
+    public static readonly TimeSpan ShutdownTimeout = TimeSpan.FromMinutes(2.5);
+
     public static IBusRegistrationConfigurator AddWorkerConsumers(this IBusRegistrationConfigurator bus, WorkerRole role = WorkerRole.All)
     {
         if (role is WorkerRole.All or WorkerRole.Main)
