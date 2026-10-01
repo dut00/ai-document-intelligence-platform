@@ -230,6 +230,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             services.AddSingleton<IStartupFilter, TestClientIpStartupFilter>();
             services.AddSingleton<IPublicHolidayProvider, StubPublicHolidayProvider>();
             services.Decorate<IDocumentAnalyzer, TransientFailureAnalyzer>();
+            services.Decorate<IDocumentAnalyzer, DeleteDuringAnalysisAnalyzer>();
 
             services.AddMassTransitTestHarness(bus =>
             {

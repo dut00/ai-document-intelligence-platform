@@ -1,5 +1,6 @@
 extern alias worker;
 
+using System.Net;
 using System.Text;
 using DocumentIntelligence.Application.Documents;
 using DocumentIntelligence.Contracts.Documents;
@@ -100,6 +101,28 @@ public sealed class DocumentProcessingTests(ApiFactory factory)
         (await client.DeleteAsync($"/api/documents/{id}", CancellationToken)).EnsureSuccessStatusCode();
 
         // The daily limits count this log, so deleting analyzed documents cannot reset them.
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var recorded = await dbContext.Database
+            .SqlQuery<int>($"""SELECT COUNT(*)::int AS "Value" FROM "AnalysisUsage" WHERE "DocumentId" = {id}""")
+            .SingleAsync(CancellationToken);
+        recorded.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Analysis_stays_counted_when_its_document_is_deleted_during_the_analysis()
+    {
+        var (client, _) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
+        var fileName = $"deleted-{Guid.NewGuid():N}.txt";
+        var content = Encoding.UTF8.GetBytes($"{DeleteDuringAnalysisAnalyzer.Marker} {fileName}");
+
+        var id = await UploadAsync(client, fileName, "text/plain", content);
+
+        // The final save fails on the row version, the attempt rolls back and the retry finds no document.
+        (await factory.ConsumedAsync<DocumentUploaded>(message => message.DocumentId == id)).ShouldBeTrue();
+        (await client.GetAsync($"/api/documents/{id}", CancellationToken)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+
+        // The AI was called, so the analysis still counts, exactly once despite the retry.
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var recorded = await dbContext.Database
