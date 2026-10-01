@@ -132,7 +132,7 @@ sequenceDiagram
 - **One correction.** An invalid answer is sent back once as an `is_error` tool result that lists the problems. A second invalid answer fails the document.
 - **Logs.** The log records only where the answer was invalid (property and rule), never the values, because those may quote the document.
 - **Cost limits.**
-  - Before each analysis the Worker checks two daily caps in an append-only usage log (`AnalysisUsage`): `Documents:DailyAnalysisLimitPerUser` (50) and `Documents:DailyAnalysisLimit` across all users (500). Over a cap, the document fails and asks the owner to upload it again later.
+  - Before each analysis the Worker checks two daily caps in an append-only usage log (`AnalysisUsage`): `Documents:DailyAnalysisLimitPerUser` (20) and `Documents:DailyAnalysisLimit` across all users (500). Over a cap, the document fails and asks the owner to upload it again later.
   - The log is saved with the outcome, so analyses that ended `Failed` after invalid answers count too. Deleting documents does not shrink it.
   - Uploads are also limited per user: a quota of documents kept, and a token bucket for new uploads.
   - Registration is limited per IP address, so the per-user limits cannot be multiplied with free accounts.
@@ -154,7 +154,7 @@ A document without dates makes no calls. Dates spread over several years make on
 - **Accounts:** ASP.NET Core Identity (`AddIdentityCore`, no roles), with `Users` as the table name.
 - **Failed logins:** there is no account lockout, which would let anyone lock a known email out.
   - Instead, `LoginAttemptThrottle` counts each login attempt before the password is checked, keyed by a hash of the email as Identity normalizes it, and refuses a client IP address after 5 attempts without a success for one account within 15 minutes. Counting first means concurrent guesses cannot all slip in before the first failure is recorded. The owner, signing in from another address, is not affected.
-  - Registration is limited to 5 per IP address per hour.
+  - Registration is limited to 10 per IP address per day, so one address gets at most 10 x 20 analyses a day, well below the overall 500.
   - A login for an unknown email still verifies the password against a dummy hash, so its response time does not reveal whether the account exists.
   - Per-client limits count an IPv6 client by its /64 prefix, which one subscriber usually holds whole.
   - Outside Development, the API refuses to start with a JWT signing key published in the repository.

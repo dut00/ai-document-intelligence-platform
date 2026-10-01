@@ -28,5 +28,5 @@ public sealed class DocumentLimitsOptions
     /// one account cannot use up everyone's allowance.
     /// </summary>
     [Range(1, int.MaxValue)]
-    public int DailyAnalysisLimitPerUser { get; init; } = 50;
+    public int DailyAnalysisLimitPerUser { get; init; } = 20;
 }

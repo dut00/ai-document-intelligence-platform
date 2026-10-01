@@ -321,9 +321,9 @@ A crash of the Worker process never reaches this policy. The endpoints therefore
   - The Worker containers have memory (1 GB) and CPU limits, a Worker processes (and prefetches) at most 4 documents at a time, and at most 4 PDF parses (abandoned ones included) run per process.
   - Quorum queues count unacknowledged deliveries. A crash returns every message the Worker held, the innocent ones included, so a redelivered document is handed to a separate endpoint that processes one at a time, in a Worker process of its own (`Worker:Role`, the `worker-isolated` container). Only there, after 3 interrupted deliveries, is a document failed.
 - **Cost.**
-  - Registration is limited to 5 per IP address per hour.
+  - Registration is limited to 10 per IP address per day.
   - A user keeps at most 200 documents (`Documents:MaxDocumentsPerUser`).
-  - At most 50 documents per user and 500 across all users are analyzed in any 24 hours (`Documents:DailyAnalysisLimitPerUser`, `Documents:DailyAnalysisLimit`). Beyond that, a document fails with a request to upload it again later.
+  - At most 20 documents per user and 500 across all users are analyzed in any 24 hours; with the registration limit, one address can use at most 200 of those (`Documents:DailyAnalysisLimitPerUser`, `Documents:DailyAnalysisLimit`). Beyond that, a document fails with a request to upload it again later.
   - The caps count an append-only usage log, which deleting documents does not shrink, and which includes analyses that failed after invalid answers.
   - Only the 5 years closest to today are checked against the holiday calendar.
 - **Logins.** The Identity lockout is replaced by `LoginAttemptThrottle`.

@@ -109,13 +109,13 @@ README.md
 - OpenAPI document (`Microsoft.AspNetCore.OpenApi`) with the **Scalar UI** at `/scalar` for browsing and trying the API, including a JWT bearer security scheme. Enabled in Development and in the `full` Docker profile.
 - ProblemDetails and a global exception handler.
 - Rate limiting (`RateLimiting` options):
-  - A fixed window per client IP on the anonymous auth endpoints (20/min); registration has a stricter one (5/h).
+  - A fixed window per client IP on the anonymous auth endpoints (20/min); registration has a stricter one (10 per day).
   - A token bucket per user on upload (burst of 10, then 2/min).
   - Failed logins are throttled per client IP and account (5 per 15 min, `LoginAttemptThrottle`) instead of an account lockout, which would let anyone lock an account out.
   - Rejections are 429 ProblemDetails with `Retry-After`.
 - Abuse and cost limits (`Documents` options, ADR 021):
   - at most 200 documents per user;
-  - at most 50 AI analyses per user and 500 overall per 24 h, counted in an append-only `AnalysisUsage` table;
+  - at most 20 AI analyses per user and 500 overall per 24 h (10 registrations per IP per day keep one address at 200), counted in an append-only `AnalysisUsage` table;
   - IPv6 clients are limited per /64;
   - published JWT keys are refused outside Development.
 - Health checks with a JSON report per check: `/health/live` (the process only) and `/health/ready` (Postgres via the DbContext, RabbitMQ via MassTransit's bus check, SeaweedFS by listing the bucket).

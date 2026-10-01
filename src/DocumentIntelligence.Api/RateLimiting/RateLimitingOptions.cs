@@ -16,12 +16,13 @@ public sealed class RateLimitingOptions
 
     /// <summary>
     /// Accounts one client IP address can create per <see cref="RegisterWindow"/>, on top of the auth limit.
-    /// Every account gets its own upload allowance, so cheap accounts would multiply it.
+    /// Every account gets its own daily AI allowance, so cheap accounts would multiply it: with the
+    /// defaults one address gets at most 10 x 20 analyses a day, well below the overall daily limit.
     /// </summary>
     [Range(1, int.MaxValue)]
-    public int RegisterPermitLimit { get; init; } = 5;
+    public int RegisterPermitLimit { get; init; } = 10;
 
-    public TimeSpan RegisterWindow { get; init; } = TimeSpan.FromHours(1);
+    public TimeSpan RegisterWindow { get; init; } = TimeSpan.FromDays(1);
 
     /// <summary>
     /// Login attempts without a success for one account from one client IP address within
