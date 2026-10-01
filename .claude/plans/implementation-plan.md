@@ -92,7 +92,7 @@ README.md
    - A message that keeps crashing the Worker is stopped. The endpoints use quorum queues, which count unacknowledged deliveries.
      - A redelivered `DocumentUploaded` is handed (via the endpoint's exchange) to `document-processing-isolated`, which processes one document at a time in a Worker process of its own (`Worker:Role` = `Isolated`, the `worker-isolated` container), so documents merely in flight with a crashing one are not blamed.
      - There, after 3 interrupted deliveries, the document fails.
-   - Extraction stops after 500 pages or once past the text budget, and times out after 1 minute: the parser runs on its own thread, the Worker stops waiting, and the abandoned parse ends at its next page check. A Worker processes at most 4 documents at once.
+   - Extraction stops after 500 pages or once past the text budget, and times out after 1 minute: the parser runs on its own thread, the Worker stops waiting, and the abandoned parse ends at its next page check; at most 4 parses (abandoned ones included) run per process, more PDFs are retried later. A Worker processes at most 4 documents at once.
    - Only the 5 years closest to today are checked against Nager.Date.
    - Logs record where an AI answer was invalid, not its values.
 5. **Real-time:** the API consumes `DocumentStatusChanged` and pushes it through `DocumentsHub` (`/hubs/documents`) to the `user:{id}` group. The UI invalidates the affected TanStack Query queries.
@@ -144,7 +144,7 @@ README.md
 - The `full` profile adds api, worker and ui, all at http://localhost:8080.
   - Every published port is bound to `127.0.0.1`: the infrastructure uses public development credentials, and its dashboards have no login.
   - `JWT_SIGNING_KEY` is empty in `.env.example`, so the API refuses to start until a real key is set.
-  - The Worker has a 1 GB memory limit.
+  - The Workers have memory (1 GB) and CPU limits.
   - The API runs in the Production environment, with migrations (`Database:MigrateOnStartup`) and Scalar (`OpenApi:Enabled`) switched on explicitly. The JWT signing key comes from `JWT_SIGNING_KEY` in `.env`.
   - Start order: the API waits for healthy Postgres, RabbitMQ and SeaweedFS. The Worker waits for a healthy API, which means the migrations are applied. The ui waits for the API too.
   - The API's health check calls `/health/live` through bash's `/dev/tcp`, because the runtime image has no curl.

@@ -112,8 +112,8 @@ sequenceDiagram
   - RabbitMQ silently drops what an exchange cannot route. A `Main` Worker therefore declares the isolated quorum queue and its binding on startup (`IsolatedQueueDeclarer`), so a hand-over is never lost before an `Isolated` Worker has started.
   - The main endpoint fetches no more messages ahead than it processes (prefetch 4).
 - **Hostile input.**
-  - Text extraction stops after 500 pages, or once the text budget (60,000 characters) is exceeded. After one minute the Worker stops waiting and the document fails without a retry. PdfPig cannot be interrupted inside a page, so it runs on its own thread: the abandoned parse goes on until its next page check, costing only CPU within the container's limits.
-  - The Worker container has a 1 GB memory limit, so a parser that runs away hits the container's limit, not the host's.
+  - Text extraction stops after 500 pages, or once the text budget (60,000 characters) is exceeded. After one minute the Worker stops waiting and the document fails without a retry. PdfPig cannot be interrupted inside a page, so it runs on its own thread: the abandoned parse goes on until its next page check. At most 4 parses, abandoned ones included, run at once per process; with all of them busy, a new PDF waits (a transient error, retried) rather than start another.
+  - The Worker containers have memory (1 GB) and CPU limits, so a parser that runs away hits the container's limits, not the host's.
   - A Worker processes at most 4 documents at a time.
 - **Delete.** The row is removed, and the file is deleted afterwards by `DocumentDeletedConsumer`, fed from the outbox. A file is therefore never deleted for a transaction that rolled back. A redelivered message is harmless, because deleting a missing object succeeds.
 - **Calendar outage.** A Nager.Date failure never fails a document. The dates are saved with `CalendarCheck = null`, and the UI shows "Calendar check unavailable".

@@ -116,8 +116,10 @@ services:
     build:
       context: .
       dockerfile: src/DocumentIntelligence.Worker/Dockerfile
-    # A hostile PDF can make the parser allocate heavily: the container, not the host, runs out of memory.
+    # A hostile PDF can make the parser allocate heavily or spin: the container, not the host, runs out
+    # of memory or CPU.
     mem_limit: 1g
+    cpus: 2
     environment:
       <<: *app-environment
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -136,6 +138,7 @@ services:
       context: .
       dockerfile: src/DocumentIntelligence.Worker/Dockerfile
     mem_limit: 1g
+    cpus: 1
     environment:
       <<: *app-environment
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

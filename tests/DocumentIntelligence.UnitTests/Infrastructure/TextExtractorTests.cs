@@ -130,6 +130,22 @@ public sealed class TextExtractorTests
     }
 
     [Fact]
+    public async Task Pdf_is_not_parsed_while_every_parser_is_busy()
+    {
+        using var parsers = new SemaphoreSlim(0, 1);
+        var extractor = new PdfTextExtractor(parsers);
+        var pdf = BuildPdf(["Invoice 7/2026"]);
+
+        // A transient error: the message is retried once a parser is free.
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => extractor.ExtractTextAsync(new MemoryStream(pdf), MaxCharacters, CancellationToken));
+
+        parsers.Release();
+        (await extractor.ExtractTextAsync(new MemoryStream(pdf), MaxCharacters, CancellationToken)).ShouldContain("Invoice 7/2026");
+        parsers.CurrentCount.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task Text_file_is_read_up_to_one_character_past_the_budget()
     {
         var text = await _text.ExtractTextAsync(new MemoryStream(Encoding.UTF8.GetBytes(new string('a', 50))), maxCharacters: 10, CancellationToken);

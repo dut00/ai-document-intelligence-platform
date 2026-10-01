@@ -10,13 +10,24 @@ namespace DocumentIntelligence.Infrastructure.TextExtraction;
 /// <summary>
 /// Reads the text layer of a PDF. A scanned PDF without one yields no text (OCR is out of scope).
 /// </summary>
-internal sealed class PdfTextExtractor : ITextExtractor
+internal sealed class PdfTextExtractor(SemaphoreSlim parsers) : ITextExtractor
 {
+    /// <summary>
+    /// PDF parses that may run at once in this process, abandoned ones included (see below), so that
+    /// files which never finish parsing cannot pile up threads until the Worker's CPU is exhausted.
+    /// </summary>
+    public const int MaxConcurrentParses = 4;
+
     /// <summary>
     /// Pages read at most. A file with thousands of pages without text (or with hostile content streams)
     /// would otherwise keep the parser busy long after the text budget stopped mattering.
     /// </summary>
     public const int MaxPages = 500;
+
+    public PdfTextExtractor()
+        : this(new SemaphoreSlim(MaxConcurrentParses, MaxConcurrentParses))
+    {
+    }
 
     public bool CanExtract(ContentType contentType) => contentType == ContentType.Pdf;
 
@@ -29,11 +40,27 @@ internal sealed class PdfTextExtractor : ITextExtractor
 
         // PdfPig is synchronous and cannot be interrupted inside a page (or while opening the file), so it
         // runs on its own thread and the caller stops waiting once the token fires: the consumer slot is
-        // freed and the document fails. The abandoned parse ends at its next page check; until then it
-        // only costs CPU, within the container's limits.
+        // freed and the document fails. The abandoned parse ends at its next page check, and keeps its
+        // permit until then. With every permit held, documents wait (a transient error, retried later)
+        // rather than start yet another parse.
+        if (!parsers.Wait(0))
+        {
+            throw new InvalidOperationException("All PDF parsers are busy; the document will be retried.");
+        }
+
         var parsing = Task.Factory.StartNew(
-            () => Extract(bytes, maxCharacters, cancellationToken),
-            cancellationToken,
+            () =>
+            {
+                try
+                {
+                    return Extract(bytes, maxCharacters, cancellationToken);
+                }
+                finally
+                {
+                    parsers.Release();
+                }
+            },
+            CancellationToken.None,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default);
 
