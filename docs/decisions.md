@@ -91,7 +91,7 @@ Each record is short: the context, the decision, what it costs, and what else wa
 
 **Consequences.** A retrying message keeps its consumer slot for the whole sequence: the backoff adds about a minute on top of the attempts themselves, and each attempt can include a slow Claude call. That is acceptable at this scale, and it works with a stock broker.
 
-A crash of the Worker process never reaches this policy. The endpoints therefore use quorum queues, whose `x-delivery-count` header lets the consumer fail a document after 3 unacknowledged deliveries, instead of letting it kill Workers forever ([021](#021-abuse-and-cost-limits-from-the-security-audit)).
+A crash of the Worker process never reaches this policy. The endpoints therefore use quorum queues, which count unacknowledged deliveries. A redelivered document is handed to an isolated endpoint that processes one document at a time in a process of its own, and is failed there after 3 interrupted deliveries, instead of killing Workers forever ([021](#021-abuse-and-cost-limits-from-the-security-audit)).
 
 **Alternatives.** Delayed redelivery with a custom RabbitMQ image, or a scheduler (Quartz or Hangfire): more moving parts.
 

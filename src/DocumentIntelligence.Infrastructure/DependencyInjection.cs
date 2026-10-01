@@ -271,8 +271,9 @@ public static class DependencyInjection
                     return;
                 }
 
-                // Quorum queues count deliveries that were never acknowledged (a crashed consumer), which
-                // DocumentUploadedConsumer uses to stop a message that keeps killing the Worker.
+                // Quorum queues count deliveries that were never acknowledged (a crashed consumer): the Worker
+                // hands a redelivered document to its isolated endpoint, which fails it once it keeps
+                // killing the Worker on its own (DocumentUploadedConsumer, IsolatedDocumentConsumer).
                 if (endpoint is IRabbitMqReceiveEndpointConfigurator rabbit)
                 {
                     rabbit.SetQuorumQueue();
