@@ -112,19 +112,15 @@ internal sealed partial class ProcessDocumentCommandHandler(
             ?? throw new UnprocessableDocumentException("The file content is missing.");
 
         string text;
-        using (var timeout = new CancellationTokenSource(ExtractionTimeout, timeProvider))
-        using (var extraction = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token))
+        try
         {
-            try
-            {
-                text = (await extractor.ExtractTextAsync(content, MaxAnalyzedCharacters, extraction.Token)).Trim();
-            }
-            // Only our own timeout is permanent; any other cancellation (e.g. a storage request timing out)
-            // is a transient failure and propagates, so the message is retried.
-            catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-            {
-                throw new UnprocessableDocumentException("Reading the document took too long.");
-            }
+            text = (await extractor.ExtractTextAsync(content, MaxAnalyzedCharacters, ExtractionTimeout, cancellationToken)).Trim();
+        }
+        catch (TimeoutException exception)
+        {
+            // Only the extractor's own timeout is permanent; any other cancellation (e.g. a storage request
+            // timing out) is a transient failure and propagates, so the message is retried.
+            throw new UnprocessableDocumentException("Reading the document took too long.", exception);
         }
 
         if (text.Length == 0)

@@ -318,7 +318,7 @@ A crash of the Worker process never reaches this policy. The endpoints therefore
 - **Network and keys.** Every published port is bound to `127.0.0.1`. `.env.example` leaves `JWT_SIGNING_KEY` empty, and outside Development the API refuses to start with any key published in the repository (`JwtOptions.PublishedSigningKeys`).
 - **Hostile files.**
   - Text extraction stops after 500 pages or once past the 60,000-character budget, and gives up after one minute (the document fails, with no retry). The parser cannot be interrupted inside a page, so it runs on its own thread and the Worker stops waiting for it; the abandoned parse ends at its next page check.
-  - The Worker containers have memory (1 GB) and CPU limits, a Worker processes (and prefetches) at most 4 documents at a time, and at most 4 PDF parses (abandoned ones included) run per process.
+  - The Worker containers have memory (1 GB) and CPU limits, a Worker processes (and prefetches) at most 4 documents at a time, and at most 8 PDF parses (abandoned ones included) run per process; a parse still running 2 minutes after being abandoned makes the Worker exit so its container restarts.
   - Quorum queues count unacknowledged deliveries. A crash returns every message the Worker held, the innocent ones included, so a redelivered document is handed to a separate endpoint that processes one at a time, in a Worker process of its own (`Worker:Role`, the `worker-isolated` container). Only there, after 3 interrupted deliveries, is a document failed.
 - **Cost.**
   - Registration is limited to 10 per IP address per day.
@@ -340,7 +340,7 @@ A crash of the Worker process never reaches this policy. The endpoints therefore
 - Existing local RabbitMQ volumes still hold the classic queues created before this change. They must be deleted once (or the volume recreated, see the README's "Upgrading an existing setup"), because a queue's type cannot change.
 - A deploy or restart counts as an interruption only if it kills a Worker mid-document: Workers finish the documents in hand on shutdown (2.5 minutes), and fetch no more than they process. A broker connection drop still counts.
 - A process-level crash inside the PDF parser (e.g. a stack overflow) still kills the Worker, but now only 3 times per document, and documents that were merely in flight are processed again rather than failed.
-- An abandoned PDF parse keeps a thread busy until its next page check. At most 4 parses run at once per Worker process (more PDFs wait and are retried), and the containers have CPU and memory limits.
+- An abandoned PDF parse keeps a thread busy until its next page check. At most 8 parses run at once per Worker process (more PDFs wait, without that wait counting against their timeout), and a stuck one restarts the Worker: documents in flight then take the isolated path. The containers have CPU and memory limits.
 - Without a lockout, an attacker with very many addresses can still guess in parallel: the account-wide delay slows each attempt, not the number running at once. A stronger defense (MFA, CAPTCHA) is out of scope.
 - A busy user can exhaust their own daily allowance, and many accounts from many addresses can still exhaust the overall one: that is the price of a hard cost ceiling.
 

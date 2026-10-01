@@ -12,7 +12,9 @@ public interface ITextExtractor
 
     /// <summary>
     /// Reads the text, stopping once more than <paramref name="maxCharacters"/> characters were read:
-    /// the rest would be cut off anyway, and a hostile file should not be read to the end.
+    /// the rest would be cut off anyway, and a hostile file should not be read to the end. Throws
+    /// <see cref="TimeoutException"/> when reading takes longer than <paramref name="timeout"/>; waiting
+    /// for a free parser does not count.
     /// </summary>
-    Task<string> ExtractTextAsync(Stream content, int maxCharacters, CancellationToken cancellationToken);
+    Task<string> ExtractTextAsync(Stream content, int maxCharacters, TimeSpan timeout, CancellationToken cancellationToken);
 }

@@ -2,6 +2,8 @@ using System.Text;
 using DocumentIntelligence.Application.Abstractions.Analysis;
 using DocumentIntelligence.Domain.Documents;
 using DocumentIntelligence.Infrastructure.TextExtraction;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using UglyToad.PdfPig.Content;
 using UglyToad.PdfPig.Core;
 using UglyToad.PdfPig.Fonts.Standard14Fonts;
@@ -13,8 +15,10 @@ public sealed class TextExtractorTests
 {
     private const int MaxCharacters = 1_000;
 
-    private readonly PdfTextExtractor _pdf = new();
-    private readonly PlainTextExtractor _text = new();
+    private static readonly TimeSpan _timeout = TimeSpan.FromMinutes(1);
+
+    private readonly PdfTextExtractor _pdf = new(TimeProvider.System, NullLogger<PdfTextExtractor>.Instance);
+    private readonly PlainTextExtractor _text = new(TimeProvider.System);
 
     private static CancellationToken CancellationToken => TestContext.Current.CancellationToken;
 
@@ -32,7 +36,7 @@ public sealed class TextExtractorTests
     {
         var pdf = BuildPdf(["Invoice 7/2026", "Total: 99.90 EUR"], ["Due date: 2026-12-23"]);
 
-        var text = await _pdf.ExtractTextAsync(new MemoryStream(pdf), MaxCharacters, CancellationToken);
+        var text = await _pdf.ExtractTextAsync(new MemoryStream(pdf), MaxCharacters, _timeout, CancellationToken);
 
         text.ShouldContain("Invoice 7/2026");
         text.ShouldContain("Total: 99.90 EUR");
@@ -44,7 +48,7 @@ public sealed class TextExtractorTests
     {
         var pdf = BuildPdf([]);
 
-        var text = await _pdf.ExtractTextAsync(new MemoryStream(pdf), MaxCharacters, CancellationToken);
+        var text = await _pdf.ExtractTextAsync(new MemoryStream(pdf), MaxCharacters, _timeout, CancellationToken);
 
         text.ShouldBeNullOrWhiteSpace();
     }
@@ -55,13 +59,13 @@ public sealed class TextExtractorTests
         var damaged = Encoding.ASCII.GetBytes("%PDF-1.7\nthis is not really a PDF");
 
         await Should.ThrowAsync<UnprocessableDocumentException>(
-            () => _pdf.ExtractTextAsync(new MemoryStream(damaged), MaxCharacters, CancellationToken));
+            () => _pdf.ExtractTextAsync(new MemoryStream(damaged), MaxCharacters, _timeout, CancellationToken));
     }
 
     [Fact]
     public async Task Text_file_is_read_as_utf8()
     {
-        var text = await _text.ExtractTextAsync(new MemoryStream(Encoding.UTF8.GetBytes("Zażółć gęślą jaźń")), MaxCharacters, CancellationToken);
+        var text = await _text.ExtractTextAsync(new MemoryStream(Encoding.UTF8.GetBytes("Zażółć gęślą jaźń")), MaxCharacters, _timeout, CancellationToken);
 
         text.ShouldBe("Zażółć gęślą jaźń");
     }
@@ -71,7 +75,7 @@ public sealed class TextExtractorTests
     {
         var utf16 = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes("Umowa najmu")).ToArray();
 
-        var text = await _text.ExtractTextAsync(new MemoryStream(utf16), MaxCharacters, CancellationToken);
+        var text = await _text.ExtractTextAsync(new MemoryStream(utf16), MaxCharacters, _timeout, CancellationToken);
 
         text.ShouldBe("Umowa najmu");
     }
@@ -81,7 +85,7 @@ public sealed class TextExtractorTests
     {
         var pages = Enumerable.Range(1, 5).Select(page => new[] { $"Page {page}: {new string('x', 40)}" }).ToArray();
 
-        var text = await _pdf.ExtractTextAsync(new MemoryStream(BuildPdf(pages)), maxCharacters: 60, CancellationToken);
+        var text = await _pdf.ExtractTextAsync(new MemoryStream(BuildPdf(pages)), maxCharacters: 60, _timeout, CancellationToken);
 
         text.ShouldContain("Page 2");
         text.ShouldNotContain("Page 3");
@@ -92,7 +96,7 @@ public sealed class TextExtractorTests
     {
         var pages = Enumerable.Range(1, PdfTextExtractor.MaxPages + 1).Select(page => new[] { $"P{page}." }).ToArray();
 
-        var text = await _pdf.ExtractTextAsync(new MemoryStream(BuildPdf(pages)), maxCharacters: 100_000, CancellationToken);
+        var text = await _pdf.ExtractTextAsync(new MemoryStream(BuildPdf(pages)), maxCharacters: 100_000, _timeout, CancellationToken);
 
         text.ShouldContain($"P{PdfTextExtractor.MaxPages}.");
         text.ShouldNotContain($"P{PdfTextExtractor.MaxPages + 1}.");
@@ -103,7 +107,7 @@ public sealed class TextExtractorTests
     {
         var content = Encoding.UTF8.GetBytes(new string(' ', 500) + new string('\n', 500) + "Invoice 7/2026");
 
-        var text = await _text.ExtractTextAsync(new MemoryStream(content), maxCharacters: 100, CancellationToken);
+        var text = await _text.ExtractTextAsync(new MemoryStream(content), maxCharacters: 100, _timeout, CancellationToken);
 
         text.ShouldBe("Invoice 7/2026");
     }
@@ -113,7 +117,7 @@ public sealed class TextExtractorTests
     {
         var content = Encoding.UTF8.GetBytes(new string(' ', 70_000) + "Invoice 7/2026 " + new string('x', 200));
 
-        var text = await _text.ExtractTextAsync(new TrickleStream(content), maxCharacters: 100, CancellationToken);
+        var text = await _text.ExtractTextAsync(new TrickleStream(content), maxCharacters: 100, _timeout, CancellationToken);
 
         text.ShouldStartWith("Invoice 7/2026");
         text.Length.ShouldBe(101);
@@ -124,31 +128,81 @@ public sealed class TextExtractorTests
     {
         var pages = Enumerable.Repeat(Array.Empty<string>(), 3).Append(["Invoice 7/2026"]).ToArray();
 
-        var text = await _pdf.ExtractTextAsync(new MemoryStream(BuildPdf(pages)), maxCharacters: 5, CancellationToken);
+        var text = await _pdf.ExtractTextAsync(new MemoryStream(BuildPdf(pages)), maxCharacters: 5, _timeout, CancellationToken);
 
         text.ShouldContain("Invoice 7/2026");
     }
 
     [Fact]
-    public async Task Pdf_is_not_parsed_while_every_parser_is_busy()
+    public async Task Pdf_waits_for_a_free_parser_and_the_wait_is_not_part_of_the_timeout()
     {
         using var parsers = new SemaphoreSlim(0, 1);
-        var extractor = new PdfTextExtractor(parsers);
-        var pdf = BuildPdf(["Invoice 7/2026"]);
+        var time = new FakeTimeProvider();
+        var extractor = Extractor(parsers, time, (_, _, _) => "Invoice 7/2026");
 
-        // A transient error: the message is retried once a parser is free.
-        await Should.ThrowAsync<InvalidOperationException>(
-            () => extractor.ExtractTextAsync(new MemoryStream(pdf), MaxCharacters, CancellationToken));
+        var extracting = extractor.ExtractTextAsync(new MemoryStream([1]), MaxCharacters, _timeout, CancellationToken);
+        time.Advance(_timeout * 2);
+        extracting.IsCompleted.ShouldBeFalse();
 
         parsers.Release();
-        (await extractor.ExtractTextAsync(new MemoryStream(pdf), MaxCharacters, CancellationToken)).ShouldContain("Invoice 7/2026");
+        (await extracting).ShouldBe("Invoice 7/2026");
         parsers.CurrentCount.ShouldBe(1);
     }
 
     [Fact]
+    public async Task Parse_abandoned_at_the_timeout_keeps_its_parser_and_recycles_the_worker_when_stuck()
+    {
+        using var parsers = new SemaphoreSlim(1, 1);
+        using var unblock = new ManualResetEventSlim();
+        var time = new FakeTimeProvider();
+        var stuck = new TaskCompletionSource();
+        var extractor = Extractor(parsers, time, (_, _, _) => { unblock.Wait(); return string.Empty; }, () => stuck.TrySetResult());
+
+        var extracting = extractor.ExtractTextAsync(new MemoryStream([1]), MaxCharacters, _timeout, CancellationToken);
+        time.Advance(_timeout);
+
+        await Should.ThrowAsync<TimeoutException>(() => extracting);
+        parsers.CurrentCount.ShouldBe(0);
+
+        time.Advance(PdfTextExtractor.StuckParseLimit);
+        await stuck.Task.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken);
+
+        unblock.Set();
+    }
+
+    [Fact]
+    public async Task Abandoned_parse_that_ends_in_time_does_not_recycle_the_worker()
+    {
+        using var parsers = new SemaphoreSlim(1, 1);
+        var time = new FakeTimeProvider();
+        var recycled = false;
+        var extractor = Extractor(
+            parsers,
+            time,
+            (_, _, cancellationToken) => { SpinWait.SpinUntil(() => cancellationToken.IsCancellationRequested); throw new OperationCanceledException(cancellationToken); },
+            () => recycled = true);
+
+        var extracting = extractor.ExtractTextAsync(new MemoryStream([1]), MaxCharacters, _timeout, CancellationToken);
+        time.Advance(_timeout);
+        await Should.ThrowAsync<TimeoutException>(() => extracting);
+
+        SpinWait.SpinUntil(() => parsers.CurrentCount == 1, TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        time.Advance(PdfTextExtractor.StuckParseLimit);
+        await Task.Delay(50, CancellationToken);
+        recycled.ShouldBeFalse();
+    }
+
+    private static PdfTextExtractor Extractor(
+        SemaphoreSlim parsers,
+        TimeProvider time,
+        Func<ReadOnlyMemory<byte>, int, CancellationToken, string> parse,
+        Action? onStuckParse = null) =>
+        new(parsers, parse, PdfTextExtractor.StuckParseLimit, onStuckParse ?? (() => { }), time, NullLogger<PdfTextExtractor>.Instance);
+
+    [Fact]
     public async Task Text_file_is_read_up_to_one_character_past_the_budget()
     {
-        var text = await _text.ExtractTextAsync(new MemoryStream(Encoding.UTF8.GetBytes(new string('a', 50))), maxCharacters: 10, CancellationToken);
+        var text = await _text.ExtractTextAsync(new MemoryStream(Encoding.UTF8.GetBytes(new string('a', 50))), maxCharacters: 10, _timeout, CancellationToken);
 
         text.Length.ShouldBe(11);
     }

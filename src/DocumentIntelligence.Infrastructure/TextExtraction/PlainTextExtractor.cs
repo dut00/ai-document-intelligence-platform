@@ -7,11 +7,26 @@ namespace DocumentIntelligence.Infrastructure.TextExtraction;
 /// <summary>
 /// Reads a text file as UTF-8, honouring a byte order mark for UTF-16/32.
 /// </summary>
-internal sealed class PlainTextExtractor : ITextExtractor
+internal sealed class PlainTextExtractor(TimeProvider timeProvider) : ITextExtractor
 {
     public bool CanExtract(ContentType contentType) => contentType == ContentType.Txt;
 
-    public async Task<string> ExtractTextAsync(Stream content, int maxCharacters, CancellationToken cancellationToken)
+    public async Task<string> ExtractTextAsync(Stream content, int maxCharacters, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        using var timeoutSource = new CancellationTokenSource(timeout, timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
+
+        try
+        {
+            return await ReadAsync(content, maxCharacters, linked.Token);
+        }
+        catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("Reading the text file took longer than allowed.");
+        }
+    }
+
+    private static async Task<string> ReadAsync(Stream content, int maxCharacters, CancellationToken cancellationToken)
     {
         using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
 

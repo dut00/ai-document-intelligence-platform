@@ -1,6 +1,7 @@
 using System.Text;
 using DocumentIntelligence.Application.Abstractions.Analysis;
 using DocumentIntelligence.Domain.Documents;
+using Microsoft.Extensions.Logging;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
 using UglyToad.PdfPig.Exceptions;
@@ -10,13 +11,28 @@ namespace DocumentIntelligence.Infrastructure.TextExtraction;
 /// <summary>
 /// Reads the text layer of a PDF. A scanned PDF without one yields no text (OCR is out of scope).
 /// </summary>
-internal sealed class PdfTextExtractor(SemaphoreSlim parsers) : ITextExtractor
+/// <remarks>
+/// PdfPig is synchronous and cannot be interrupted inside a page (or while opening the file), so each parse
+/// runs on its own thread and the caller stops waiting at the timeout: the consumer slot is freed and the
+/// document fails. The abandoned parse ends at its next page check, keeping its parser permit until then.
+/// A parse still running <see cref="StuckParseLimit"/> after it was abandoned will not end on its own:
+/// the process is then recycled (the container restarts), which is the only way to stop it.
+/// </remarks>
+internal sealed partial class PdfTextExtractor(
+    SemaphoreSlim parsers,
+    Func<ReadOnlyMemory<byte>, int, CancellationToken, string> parse,
+    TimeSpan stuckParseLimit,
+    Action onStuckParse,
+    TimeProvider timeProvider,
+    ILogger<PdfTextExtractor> logger)
+    : ITextExtractor
 {
     /// <summary>
-    /// PDF parses that may run at once in this process, abandoned ones included (see below), so that
-    /// files which never finish parsing cannot pile up threads until the Worker's CPU is exhausted.
+    /// PDF parses that may run at once in this process, abandoned ones included, so that files which never
+    /// finish parsing cannot pile up threads. Twice the consumer slots, so a few abandoned parses do not
+    /// hold up honest documents.
     /// </summary>
-    public const int MaxConcurrentParses = 4;
+    public const int MaxConcurrentParses = 8;
 
     /// <summary>
     /// Pages read at most. A file with thousands of pages without text (or with hostile content streams)
@@ -24,47 +40,82 @@ internal sealed class PdfTextExtractor(SemaphoreSlim parsers) : ITextExtractor
     /// </summary>
     public const int MaxPages = 500;
 
-    public PdfTextExtractor()
-        : this(new SemaphoreSlim(MaxConcurrentParses, MaxConcurrentParses))
+    public static readonly TimeSpan StuckParseLimit = TimeSpan.FromMinutes(2);
+
+    public PdfTextExtractor(TimeProvider timeProvider, ILogger<PdfTextExtractor> logger)
+        : this(
+            new SemaphoreSlim(MaxConcurrentParses, MaxConcurrentParses),
+            Extract,
+            StuckParseLimit,
+            () => Environment.FailFast("A PDF parse abandoned at its timeout is still running; recycling the Worker."),
+            timeProvider,
+            logger)
     {
     }
 
     public bool CanExtract(ContentType contentType) => contentType == ContentType.Pdf;
 
-    public async Task<string> ExtractTextAsync(Stream content, int maxCharacters, CancellationToken cancellationToken)
+    public async Task<string> ExtractTextAsync(Stream content, int maxCharacters, TimeSpan timeout, CancellationToken cancellationToken)
     {
         // PdfPig needs random access, storage streams are forward-only, and uploads are at most 10 MB.
         using var buffer = new MemoryStream();
         await content.CopyToAsync(buffer, cancellationToken);
         var bytes = new ReadOnlyMemory<byte>(buffer.GetBuffer(), 0, (int)buffer.Length);
 
-        // PdfPig is synchronous and cannot be interrupted inside a page (or while opening the file), so it
-        // runs on its own thread and the caller stops waiting once the token fires: the consumer slot is
-        // freed and the document fails. The abandoned parse ends at its next page check, and keeps its
-        // permit until then. With every permit held, documents wait (a transient error, retried later)
-        // rather than start yet another parse.
-        if (!parsers.Wait(0))
+        // Waiting for a free parser is not part of the timeout: the wait is bounded, because parsers held by
+        // stuck parses get the process recycled.
+        await parsers.WaitAsync(cancellationToken);
+
+        using var timeoutSource = new CancellationTokenSource(timeout, timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
+
+        Task<string> parsing;
+        try
         {
-            throw new InvalidOperationException("All PDF parsers are busy; the document will be retried.");
+            parsing = Task.Factory.StartNew(
+                () =>
+                {
+                    try
+                    {
+                        return parse(bytes, maxCharacters, linked.Token);
+                    }
+                    finally
+                    {
+                        parsers.Release();
+                    }
+                },
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+        }
+        catch
+        {
+            parsers.Release();
+            throw;
         }
 
-        var parsing = Task.Factory.StartNew(
-            () =>
-            {
-                try
-                {
-                    return Extract(bytes, maxCharacters, cancellationToken);
-                }
-                finally
-                {
-                    parsers.Release();
-                }
-            },
-            CancellationToken.None,
-            TaskCreationOptions.LongRunning,
-            TaskScheduler.Default);
+        try
+        {
+            return await parsing.WaitAsync(linked.Token);
+        }
+        catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            _ = WatchAbandonedParseAsync(parsing);
+            throw new TimeoutException("Parsing the PDF took longer than allowed.");
+        }
+    }
 
-        return await parsing.WaitAsync(cancellationToken);
+    private async Task WatchAbandonedParseAsync(Task parsing)
+    {
+        var finished = await Task.WhenAny(parsing, Task.Delay(stuckParseLimit, timeProvider));
+        if (finished != parsing)
+        {
+            LogStuckParse(logger, stuckParseLimit);
+            onStuckParse();
+        }
+
+        // Observe the abandoned parse's outcome (normally a cancellation), so it is not reported as unobserved.
+        _ = parsing.Exception;
     }
 
     private static string Extract(ReadOnlyMemory<byte> bytes, int maxCharacters, CancellationToken cancellationToken)
@@ -109,4 +160,7 @@ internal sealed class PdfTextExtractor(SemaphoreSlim parsers) : ITextExtractor
             throw new UnprocessableDocumentException("The PDF file is damaged or not a valid PDF.", exception);
         }
     }
+
+    [LoggerMessage(Level = LogLevel.Critical, Message = "A PDF parse abandoned at its timeout is still running after {Limit}; recycling the Worker")]
+    private static partial void LogStuckParse(ILogger logger, TimeSpan limit);
 }

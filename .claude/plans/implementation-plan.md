@@ -92,7 +92,7 @@ README.md
    - A message that keeps crashing the Worker is stopped. The endpoints use quorum queues, which count unacknowledged deliveries.
      - A redelivered `DocumentUploaded` is handed (via the endpoint's exchange) to `document-processing-isolated`, which processes one document at a time in a Worker process of its own (`Worker:Role` = `Isolated`, the `worker-isolated` container), so documents merely in flight with a crashing one are not blamed.
      - There, after 3 interrupted deliveries, the document fails.
-   - Extraction stops after 500 pages or once past the text budget, and times out after 1 minute: the parser runs on its own thread, the Worker stops waiting, and the abandoned parse ends at its next page check; at most 4 parses (abandoned ones included) run per process, more PDFs are retried later. A Worker processes at most 4 documents at once.
+   - Extraction stops after 500 pages or once past the text budget, and times out after 1 minute: the parser runs on its own thread, the Worker stops waiting, and the abandoned parse ends at its next page check; at most 8 parses (abandoned ones included) run per process, more PDFs wait for a free one; a parse stuck 2 minutes after being abandoned makes the Worker exit (the container restarts). A Worker processes at most 4 documents at once.
    - Only the 5 years closest to today are checked against Nager.Date.
    - Logs record where an AI answer was invalid, not its values.
 5. **Real-time:** the API consumes `DocumentStatusChanged` and pushes it through `DocumentsHub` (`/hubs/documents`) to the `user:{id}` group. The UI invalidates the affected TanStack Query queries.

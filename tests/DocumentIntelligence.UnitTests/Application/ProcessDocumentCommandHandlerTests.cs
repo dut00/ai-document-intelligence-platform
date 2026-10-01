@@ -41,7 +41,7 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
         _storage.OpenReadAsync(Arg.Any<StorageKey>(), Arg.Any<CancellationToken>())
             .Returns(_ => new MemoryStream(Encoding.UTF8.GetBytes(DocumentText)));
         _extractor.CanExtract(ContentType.Txt).Returns(true);
-        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(DocumentText);
+        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(DocumentText);
         _analyzer.Model.Returns("test-model");
         _analyzer.AnalyzeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(AnalysisResult());
         _holidays.GetPublicHolidaysAsync(2026, Arg.Any<CancellationToken>())
@@ -167,7 +167,7 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
     [Fact]
     public async Task Document_without_text_fails_without_calling_the_analyzer()
     {
-        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns("  \n ");
+        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns("  \n ");
         var document = Stored(PendingDocument());
 
         var outcome = await ProcessAsync(document);
@@ -298,14 +298,17 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
         await ProcessAsync(Stored(PendingDocument()));
 
         await _extractor.Received(1).ExtractTextAsync(
-            Arg.Any<Stream>(), ProcessDocumentCommandHandler.MaxAnalyzedCharacters, Arg.Any<CancellationToken>());
+            Arg.Any<Stream>(),
+            ProcessDocumentCommandHandler.MaxAnalyzedCharacters,
+            ProcessDocumentCommandHandler.ExtractionTimeout,
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task Cancellation_that_is_not_the_extraction_timeout_is_transient()
     {
         // E.g. the storage client's own HTTP timeout while the file is being read.
-        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout."));
         var document = Stored(PendingDocument());
 
@@ -317,13 +320,11 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
     [Fact]
     public async Task Document_whose_text_takes_too_long_to_read_fails_without_a_retry()
     {
-        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(call => WaitUntilCanceledAsync(call.ArgAt<CancellationToken>(2)));
+        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new TimeoutException("Parsing the PDF took longer than allowed."));
         var document = Stored(PendingDocument());
 
-        var processing = ProcessAsync(document);
-        _time.Advance(ProcessDocumentCommandHandler.ExtractionTimeout);
-        var outcome = await processing;
+        var outcome = await ProcessAsync(document);
 
         outcome.ShouldBe(ProcessingOutcome.Failed);
         document.FailureReason.ShouldBe("Reading the document took too long.");
@@ -333,7 +334,7 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
     [Fact]
     public async Task Long_text_is_truncated_before_analysis()
     {
-        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
             .Returns(new string('a', ProcessDocumentCommandHandler.MaxAnalyzedCharacters + 100));
 
         await ProcessAsync(Stored(PendingDocument()));
@@ -341,12 +342,6 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
         await _analyzer.Received(1).AnalyzeAsync(
             Arg.Is<string>(text => text.Length == ProcessDocumentCommandHandler.MaxAnalyzedCharacters),
             Arg.Any<CancellationToken>());
-    }
-
-    private static async Task<string> WaitUntilCanceledAsync(CancellationToken cancellationToken)
-    {
-        await Task.Delay(Timeout.Infinite, cancellationToken);
-        return string.Empty;
     }
 
     private async Task<ProcessingOutcome> ProcessAsync(Document document)
