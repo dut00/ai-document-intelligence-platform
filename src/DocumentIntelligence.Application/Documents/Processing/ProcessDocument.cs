@@ -23,9 +23,15 @@ namespace DocumentIntelligence.Application.Documents.Processing;
 public sealed record ProcessDocumentCommand(DocumentId DocumentId) : ICommand<ProcessingOutcome>
 {
     /// <summary>
-    /// The longest one attempt may take: extraction plus the AI call (with the SDK's retries and the one
-    /// correction round). A Worker that is stopping waits this long for the documents in hand.
+    /// The longest one attempt may take, extraction and the AI call together. A Worker that is stopping waits
+    /// this long for the documents in hand.
     /// </summary>
+    /// <remarks>
+    /// Deliberately shorter than the AI call's own budget: with the default <c>Anthropic:Timeout</c> and
+    /// <c>MaxRetries</c> one request may take up to 6 minutes, and about 12 with the correction round. An
+    /// attempt that runs into the deadline is cut short and retried as a whole (a transient failure), which
+    /// keeps a stopping Worker's wait bounded.
+    /// </remarks>
     public static readonly TimeSpan ProcessingDeadline = TimeSpan.FromMinutes(5);
 }
 

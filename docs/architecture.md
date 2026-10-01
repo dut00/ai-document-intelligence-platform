@@ -101,6 +101,7 @@ sequenceDiagram
 - **Transient and permanent failures:**
   - `UnprocessableDocumentException` is permanent: no text layer, an unsupported or unreadable file, an AI request the service rejected, or an analysis that is still invalid after the correction. The document is marked `Failed` right away, with no retry.
   - Anything else is thrown, and MassTransit retries it with exponential backoff (`Messaging:Retry`). Before that, the Anthropic SDK has already retried rate limits and 5xx responses itself.
+  - One attempt is capped at 5 minutes (`ProcessDocumentCommand.ProcessingDeadline`), deliberately less than the AI call's own budget: with the default timeout and SDK retries a request may take up to 6 minutes, and about 12 with the correction round. An attempt that runs into the cap is cancelled and retried as a whole.
   - Nager.Date calls use `Microsoft.Extensions.Http.Resilience`.
 - **Dead-letter queue.** Once the retries are exhausted, the message moves to `document-uploaded_error`, and `DocumentUploadedFaultConsumer` marks the document `Failed` with a neutral reason. The technical details stay in the log and in the error queue.
 - **Worker crash.** The transaction rolls back, so the document is still `Pending`, and the unacknowledged message is redelivered. As a safeguard, the domain also lets a document that sat in `Processing` for more than 15 minutes be picked up again, although this flow never commits that state.
