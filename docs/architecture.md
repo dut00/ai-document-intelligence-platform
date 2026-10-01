@@ -155,6 +155,7 @@ A document without dates makes no calls. Dates spread over several years make on
 - **Failed logins:** there is no account lockout, which would let anyone lock a known email out.
   - Instead, `LoginAttemptThrottle` counts each login attempt before the password is checked, keyed by a hash of the email as Identity normalizes it, and refuses a client IP address after 5 attempts without a success for one account within 15 minutes. Counting first means concurrent guesses cannot all slip in before the first failure is recorded. The owner, signing in from another address, is not affected.
   - Registration is limited to 5 per IP address per hour.
+  - A login for an unknown email still verifies the password against a dummy hash, so its response time does not reveal whether the account exists.
   - Per-client limits count an IPv6 client by its /64 prefix, which one subscriber usually holds whole.
   - Outside Development, the API refuses to start with a JWT signing key published in the repository.
 - **Access token:** a JWT (HMAC SHA-256) that lives for 15 minutes. `sub` is the user id.

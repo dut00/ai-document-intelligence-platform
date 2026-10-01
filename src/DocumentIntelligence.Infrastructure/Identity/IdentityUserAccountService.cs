@@ -8,6 +8,15 @@ namespace DocumentIntelligence.Infrastructure.Identity;
 
 internal sealed class IdentityUserAccountService(UserManager<ApplicationUser> userManager) : IUserAccountService
 {
+    private static readonly ApplicationUser _dummyUser = new();
+
+    // Hashed once per process (this service is scoped), with the same hasher settings as real passwords,
+    // so verifying it takes as long as verifying a real one.
+    private static string? _dummyPasswordHash;
+
+    private string DummyPasswordHash =>
+        _dummyPasswordHash ??= userManager.PasswordHasher.HashPassword(_dummyUser, Guid.NewGuid().ToString());
+
     public async Task<Result<UserAccount>> RegisterAsync(string email, string password, CancellationToken cancellationToken)
     {
         var user = new ApplicationUser { Id = Guid.CreateVersion7(), UserName = email, Email = email };
@@ -38,10 +47,17 @@ internal sealed class IdentityUserAccountService(UserManager<ApplicationUser> us
     {
         var user = await userManager.FindByEmailAsync(email);
 
-        // The same error for unknown users and wrong passwords avoids revealing which emails exist.
+        // The same error for unknown users and wrong passwords avoids revealing which emails exist, and an
+        // unknown user still costs one password hash, so the response time does not reveal it either.
         // There is no account lockout: it would let anyone lock a known email out. The API throttles
         // failures per client address and account instead (LoginAttemptThrottle).
-        if (user is null || !await userManager.CheckPasswordAsync(user, password))
+        if (user is null)
+        {
+            userManager.PasswordHasher.VerifyHashedPassword(_dummyUser, DummyPasswordHash, password);
+            return AuthErrors.InvalidCredentials;
+        }
+
+        if (!await userManager.CheckPasswordAsync(user, password))
         {
             return AuthErrors.InvalidCredentials;
         }
