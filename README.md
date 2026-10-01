@@ -78,9 +78,13 @@ cp .env.example .env
 
 ### Everything in Docker
 
+The API runs in the Production environment there, so it needs a signing key of its own. Set `JWT_SIGNING_KEY` in `.env`, e.g. to the output of `openssl rand -base64 48`. The API refuses to start without one.
+
 ```sh
 docker compose --profile full up -d --build
 ```
+
+Every port is published on `127.0.0.1` only. The infrastructure uses the public development credentials from `.env.example`, and the dashboards have no login, so none of it should be reachable from other machines.
 
 | URL | What |
 | --- | --- |
@@ -135,7 +139,8 @@ Settings come from `appsettings.json`, from environment variables (`Section__Key
 | `Anthropic:Model`, `MaxTokens`, `Timeout`, `MaxRetries` | Haiku 4.5, 4096, 2 min, 2 | the Claude request |
 | `Holidays:CountryCode`, `BaseUrl`, `CacheDuration` | `PL`, Nager.Date, 24 h | the calendar check |
 | `Messaging:Retry:*` | 5 retries, 1 s to 30 s | exponential message retry before the DLQ |
-| `RateLimiting:*` | 20 auth requests/min per IP; 10 uploads, then 2/min per user | rate limits |
+| `RateLimiting:*` | 20 auth requests/min and 5 registrations/h per IP; 5 login attempts without a success per account and IP in 15 min; 10 uploads, then 2/min per user | rate limits |
+| `Documents:MaxDocumentsPerUser`, `DailyAnalysisLimitPerUser`, `DailyAnalysisLimit` | 200, 50, 500 | storage quota per user; AI analyses per user and across all users in 24 h |
 | `ForwardedHeaders:KnownProxies` / `KnownNetworks` | none (loopback only) | proxies trusted for `X-Forwarded-For` |
 | `OpenApi:Enabled`, `Database:MigrateOnStartup` | on in Development | Scalar UI and migrations outside Development |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Aspire Dashboard (Development) | telemetry export; empty turns it off |

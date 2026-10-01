@@ -7,11 +7,21 @@ namespace DocumentIntelligence.Worker.Consumers;
 /// </summary>
 public static class WorkerConsumers
 {
-    public static IBusRegistrationConfigurator AddWorkerConsumers(this IBusRegistrationConfigurator bus)
+    public const string RoleSetting = "Worker:Role";
+
+    public static IBusRegistrationConfigurator AddWorkerConsumers(this IBusRegistrationConfigurator bus, WorkerRole role = WorkerRole.All)
     {
-        bus.AddConsumer<DocumentUploadedConsumer>();
-        bus.AddConsumer<DocumentUploadedFaultConsumer>();
-        bus.AddConsumer<DocumentDeletedConsumer>();
+        if (role is WorkerRole.All or WorkerRole.Main)
+        {
+            bus.AddConsumer<DocumentUploadedConsumer, DocumentUploadedConsumerDefinition>();
+            bus.AddConsumer<DocumentUploadedFaultConsumer>();
+            bus.AddConsumer<DocumentDeletedConsumer>();
+        }
+
+        if (role is WorkerRole.All or WorkerRole.Isolated)
+        {
+            bus.AddConsumer<IsolatedDocumentConsumer, IsolatedDocumentConsumerDefinition>();
+        }
 
         return bus;
     }

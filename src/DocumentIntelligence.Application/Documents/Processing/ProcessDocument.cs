@@ -7,6 +7,7 @@ using DocumentIntelligence.Domain.Abstractions;
 using DocumentIntelligence.Domain.Documents;
 using DocumentIntelligence.Domain.Documents.Analysis;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace DocumentIntelligence.Application.Documents.Processing;
 
@@ -28,6 +29,8 @@ internal sealed partial class ProcessDocumentCommandHandler(
     IEnumerable<ITextExtractor> textExtractors,
     IDocumentAnalyzer analyzer,
     IDateInsightsService dateInsights,
+    IAnalysisUsageLog usageLog,
+    IOptions<DocumentLimitsOptions> limits,
     TimeProvider timeProvider,
     DocumentProcessingMetrics metrics,
     ILogger<ProcessDocumentCommandHandler> logger)
@@ -37,6 +40,18 @@ internal sealed partial class ProcessDocumentCommandHandler(
     /// Roughly 15k tokens: bounds the cost and latency of a single analysis.
     /// </summary>
     public const int MaxAnalyzedCharacters = 60_000;
+
+    /// <summary>
+    /// Reading the text of an honest 10 MB file takes seconds; a file that takes longer is treated as
+    /// hostile and failed rather than retried.
+    /// </summary>
+    public static readonly TimeSpan ExtractionTimeout = TimeSpan.FromMinutes(1);
+
+    public const string DailyLimitReachedReason =
+        "The daily analysis limit has been reached. Please upload the document again tomorrow.";
+
+    public const string UserDailyLimitReachedReason =
+        "You have reached your daily analysis limit. Please upload the document again tomorrow.";
 
     /// <summary>
     /// A document left in processing this long, e.g. by a crashed worker, may be picked up again.
@@ -67,6 +82,7 @@ internal sealed partial class ProcessDocumentCommandHandler(
         try
         {
             var text = await ExtractTextAsync(document, cancellationToken);
+            await ReserveAnalysisAsync(document, cancellationToken);
             var result = await AnalyzeAsync(text, cancellationToken);
             analysis = await CreateAnalysisAsync(document.Id, result, cancellationToken);
         }
@@ -95,7 +111,20 @@ internal sealed partial class ProcessDocumentCommandHandler(
         await using var content = await storage.OpenReadAsync(document.StorageKey, cancellationToken)
             ?? throw new UnprocessableDocumentException("The file content is missing.");
 
-        var text = (await extractor.ExtractTextAsync(content, cancellationToken)).Trim();
+        string text;
+        using (var timeout = new CancellationTokenSource(ExtractionTimeout, timeProvider))
+        using (var extraction = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token))
+        {
+            try
+            {
+                text = (await extractor.ExtractTextAsync(content, MaxAnalyzedCharacters, extraction.Token)).Trim();
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new UnprocessableDocumentException("Reading the document took too long.");
+            }
+        }
+
         if (text.Length == 0)
         {
             throw new UnprocessableDocumentException(
@@ -104,7 +133,7 @@ internal sealed partial class ProcessDocumentCommandHandler(
 
         if (text.Length > MaxAnalyzedCharacters)
         {
-            LogTruncated(logger, document.Id, text.Length, MaxAnalyzedCharacters);
+            LogTruncated(logger, document.Id, MaxAnalyzedCharacters);
 
             // Never cut a surrogate pair in half.
             var length = char.IsHighSurrogate(text[MaxAnalyzedCharacters - 1]) ? MaxAnalyzedCharacters - 1 : MaxAnalyzedCharacters;
@@ -112,6 +141,37 @@ internal sealed partial class ProcessDocumentCommandHandler(
         }
 
         return text;
+    }
+
+    // Bounds the AI cost: overall, because accounts are free, and per user, so one account cannot use up
+    // everyone's allowance. Counted from the usage log, which deleting documents does not shrink.
+    // Concurrent Workers can overshoot by a few documents; the limits do not need to be exact.
+    private async Task ReserveAnalysisAsync(Document document, CancellationToken cancellationToken)
+    {
+        // A retry or redelivery of a document that was already counted (and perhaps already paid for).
+        if (await usageLog.IsRecordedAsync(document.Id, cancellationToken))
+        {
+            return;
+        }
+
+        var now = timeProvider.GetUtcNow();
+        var since = now.AddDays(-1);
+
+        if (await usageLog.CountForOwnerSinceAsync(document.OwnerId, since, cancellationToken) >= limits.Value.DailyAnalysisLimitPerUser)
+        {
+            LogDailyLimitReached(logger, "per-user", limits.Value.DailyAnalysisLimitPerUser);
+            throw new UnprocessableDocumentException(UserDailyLimitReachedReason);
+        }
+
+        if (await usageLog.CountSinceAsync(since, cancellationToken) >= limits.Value.DailyAnalysisLimit)
+        {
+            LogDailyLimitReached(logger, "overall", limits.Value.DailyAnalysisLimit);
+            throw new UnprocessableDocumentException(DailyLimitReachedReason);
+        }
+
+        // Committed now, before the AI is called: if this attempt later rolls back (the document was deleted
+        // meanwhile, or a transient error), the analysis has still been paid for and must still count.
+        await usageLog.RecordAsync(document.OwnerId, document.Id, now, cancellationToken);
     }
 
     private async Task<AnalysisResult> AnalyzeAsync(string text, CancellationToken cancellationToken)
@@ -169,6 +229,9 @@ internal sealed partial class ProcessDocumentCommandHandler(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Document {DocumentId} cannot be processed: {Reason}")]
     private static partial void LogUnprocessable(ILogger logger, Exception exception, DocumentId documentId, string reason);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Text of document {DocumentId} truncated from {Length} to {MaxLength} characters")]
-    private static partial void LogTruncated(ILogger logger, DocumentId documentId, int length, int maxLength);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The {Scope} daily limit of {Limit} analyses has been reached; failing the document")]
+    private static partial void LogDailyLimitReached(ILogger logger, string scope, int limit);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Text of document {DocumentId} truncated to {MaxLength} characters")]
+    private static partial void LogTruncated(ILogger logger, DocumentId documentId, int maxLength);
 }

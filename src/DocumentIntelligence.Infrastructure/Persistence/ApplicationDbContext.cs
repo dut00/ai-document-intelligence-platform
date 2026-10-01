@@ -20,6 +20,8 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
 
     public DbSet<Document> Documents => Set<Document>();
 
+    internal DbSet<AnalysisUsage> AnalysisUsage => Set<AnalysisUsage>();
+
     IQueryable<Document> IReadDbContext.Documents => Documents.AsNoTracking();
 
     protected override void OnModelCreating(ModelBuilder builder)

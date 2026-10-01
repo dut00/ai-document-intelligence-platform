@@ -11,10 +11,21 @@ internal sealed class PlainTextExtractor : ITextExtractor
 {
     public bool CanExtract(ContentType contentType) => contentType == ContentType.Txt;
 
-    public async Task<string> ExtractTextAsync(Stream content, CancellationToken cancellationToken)
+    public async Task<string> ExtractTextAsync(Stream content, int maxCharacters, CancellationToken cancellationToken)
     {
         using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
 
-        return await reader.ReadToEndAsync(cancellationToken);
+        // Leading whitespace would otherwise use up the budget and leave no text at all.
+        while (reader.Peek() is var next && next >= 0 && char.IsWhiteSpace((char)next))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            reader.Read();
+        }
+
+        // One character more than the limit tells the caller the text was cut.
+        var buffer = new char[maxCharacters + 1];
+        var length = await reader.ReadBlockAsync(buffer, cancellationToken);
+
+        return new string(buffer, 0, length);
     }
 }

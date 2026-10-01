@@ -11,6 +11,8 @@ namespace DocumentIntelligence.UnitTests.Infrastructure;
 
 public sealed class TextExtractorTests
 {
+    private const int MaxCharacters = 1_000;
+
     private readonly PdfTextExtractor _pdf = new();
     private readonly PlainTextExtractor _text = new();
 
@@ -30,7 +32,7 @@ public sealed class TextExtractorTests
     {
         var pdf = BuildPdf(["Invoice 7/2026", "Total: 99.90 EUR"], ["Due date: 2026-12-23"]);
 
-        var text = await _pdf.ExtractTextAsync(new MemoryStream(pdf), CancellationToken);
+        var text = await _pdf.ExtractTextAsync(new MemoryStream(pdf), MaxCharacters, CancellationToken);
 
         text.ShouldContain("Invoice 7/2026");
         text.ShouldContain("Total: 99.90 EUR");
@@ -42,7 +44,7 @@ public sealed class TextExtractorTests
     {
         var pdf = BuildPdf([]);
 
-        var text = await _pdf.ExtractTextAsync(new MemoryStream(pdf), CancellationToken);
+        var text = await _pdf.ExtractTextAsync(new MemoryStream(pdf), MaxCharacters, CancellationToken);
 
         text.ShouldBeNullOrWhiteSpace();
     }
@@ -53,13 +55,13 @@ public sealed class TextExtractorTests
         var damaged = Encoding.ASCII.GetBytes("%PDF-1.7\nthis is not really a PDF");
 
         await Should.ThrowAsync<UnprocessableDocumentException>(
-            () => _pdf.ExtractTextAsync(new MemoryStream(damaged), CancellationToken));
+            () => _pdf.ExtractTextAsync(new MemoryStream(damaged), MaxCharacters, CancellationToken));
     }
 
     [Fact]
     public async Task Text_file_is_read_as_utf8()
     {
-        var text = await _text.ExtractTextAsync(new MemoryStream(Encoding.UTF8.GetBytes("Zażółć gęślą jaźń")), CancellationToken);
+        var text = await _text.ExtractTextAsync(new MemoryStream(Encoding.UTF8.GetBytes("Zażółć gęślą jaźń")), MaxCharacters, CancellationToken);
 
         text.ShouldBe("Zażółć gęślą jaźń");
     }
@@ -69,9 +71,59 @@ public sealed class TextExtractorTests
     {
         var utf16 = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes("Umowa najmu")).ToArray();
 
-        var text = await _text.ExtractTextAsync(new MemoryStream(utf16), CancellationToken);
+        var text = await _text.ExtractTextAsync(new MemoryStream(utf16), MaxCharacters, CancellationToken);
 
         text.ShouldBe("Umowa najmu");
+    }
+
+    [Fact]
+    public async Task Pdf_reading_stops_once_the_text_budget_is_exceeded()
+    {
+        var pages = Enumerable.Range(1, 5).Select(page => new[] { $"Page {page}: {new string('x', 40)}" }).ToArray();
+
+        var text = await _pdf.ExtractTextAsync(new MemoryStream(BuildPdf(pages)), maxCharacters: 60, CancellationToken);
+
+        text.ShouldContain("Page 2");
+        text.ShouldNotContain("Page 3");
+    }
+
+    [Fact]
+    public async Task Pdf_reading_stops_after_the_page_limit()
+    {
+        var pages = Enumerable.Range(1, PdfTextExtractor.MaxPages + 1).Select(page => new[] { $"P{page}." }).ToArray();
+
+        var text = await _pdf.ExtractTextAsync(new MemoryStream(BuildPdf(pages)), maxCharacters: 100_000, CancellationToken);
+
+        text.ShouldContain($"P{PdfTextExtractor.MaxPages}.");
+        text.ShouldNotContain($"P{PdfTextExtractor.MaxPages + 1}.");
+    }
+
+    [Fact]
+    public async Task Leading_whitespace_does_not_use_up_the_text_budget()
+    {
+        var content = Encoding.UTF8.GetBytes(new string(' ', 500) + new string('\n', 500) + "Invoice 7/2026");
+
+        var text = await _text.ExtractTextAsync(new MemoryStream(content), maxCharacters: 100, CancellationToken);
+
+        text.ShouldBe("Invoice 7/2026");
+    }
+
+    [Fact]
+    public async Task Leading_blank_pdf_pages_do_not_use_up_the_text_budget()
+    {
+        var pages = Enumerable.Repeat(Array.Empty<string>(), 3).Append(["Invoice 7/2026"]).ToArray();
+
+        var text = await _pdf.ExtractTextAsync(new MemoryStream(BuildPdf(pages)), maxCharacters: 5, CancellationToken);
+
+        text.ShouldContain("Invoice 7/2026");
+    }
+
+    [Fact]
+    public async Task Text_file_is_read_up_to_one_character_past_the_budget()
+    {
+        var text = await _text.ExtractTextAsync(new MemoryStream(Encoding.UTF8.GetBytes(new string('a', 50))), maxCharacters: 10, CancellationToken);
+
+        text.Length.ShouldBe(11);
     }
 
     private static byte[] BuildPdf(params string[][] pages)

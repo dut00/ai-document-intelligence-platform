@@ -103,6 +103,17 @@ public sealed class DocumentEndpointsTests(ApiFactory factory)
         (await response.Content.ReadFromJsonAsync<ValidationProblemDetails>(CancellationToken))!.Errors.ShouldContainKey("PageSize");
     }
 
+    [Fact]
+    public async Task Page_number_whose_row_offset_would_overflow_returns_validation_problem()
+    {
+        var (client, _) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
+
+        var response = await client.GetAsync($"/api/documents?page={int.MaxValue}&pageSize=100", CancellationToken);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await response.Content.ReadFromJsonAsync<ValidationProblemDetails>(CancellationToken))!.Errors.ShouldContainKey("Page");
+    }
+
     [Theory]
     [InlineData("scan.pdf", "application/pdf", "not a pdf")]
     [InlineData("notes.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "PK")]

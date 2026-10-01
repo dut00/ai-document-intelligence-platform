@@ -19,9 +19,12 @@ public sealed class GetDocumentsQueryValidator : AbstractValidator<GetDocumentsQ
 {
     public const int MaxPageSize = 100;
 
+    public const int MaxPage = int.MaxValue / MaxPageSize;
+
     public GetDocumentsQueryValidator()
     {
-        RuleFor(query => query.Page).GreaterThanOrEqualTo(1);
+        // The upper bound keeps the row offset, (Page - 1) * PageSize, within an int.
+        RuleFor(query => query.Page).InclusiveBetween(1, MaxPage);
         RuleFor(query => query.PageSize).InclusiveBetween(1, MaxPageSize);
         RuleFor(query => query.Status).IsInEnum();
     }

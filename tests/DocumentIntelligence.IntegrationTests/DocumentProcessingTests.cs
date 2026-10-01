@@ -5,9 +5,13 @@ using DocumentIntelligence.Application.Documents;
 using DocumentIntelligence.Contracts.Documents;
 using DocumentIntelligence.Domain.Documents;
 using DocumentIntelligence.Domain.Documents.Analysis;
+using DocumentIntelligence.Domain.Users;
+using DocumentIntelligence.Infrastructure.Persistence;
 using DocumentIntelligence.IntegrationTests.Infrastructure;
 using MassTransit;
 using MassTransit.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using worker::DocumentIntelligence.Worker.Consumers;
 
 namespace DocumentIntelligence.IntegrationTests;
@@ -84,6 +88,76 @@ public sealed class DocumentProcessingTests(ApiFactory factory)
         // A permanent failure is not retried, so the message never faults.
         (await factory.Services.GetTestHarness().Published.Any<Fault<DocumentUploaded>>(
             context => context.Context.Message.Message.DocumentId == id, CancellationToken)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Analysis_stays_counted_after_its_document_is_deleted()
+    {
+        var (client, _) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
+        var id = await UploadAsync(client, "notes.txt", "text/plain", Encoding.UTF8.GetBytes("Meeting notes of 2026-11-11."));
+        (await client.WaitUntilProcessedAsync(id)).Status.ShouldBe(DocumentStatus.Completed);
+
+        (await client.DeleteAsync($"/api/documents/{id}", CancellationToken)).EnsureSuccessStatusCode();
+
+        // The daily limits count this log, so deleting analyzed documents cannot reset them.
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var recorded = await dbContext.Database
+            .SqlQuery<int>($"""SELECT COUNT(*)::int AS "Value" FROM "AnalysisUsage" WHERE "DocumentId" = {id}""")
+            .SingleAsync(CancellationToken);
+        recorded.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Redelivered_document_is_processed_again_in_isolation_rather_than_failed()
+    {
+        var (client, ownerId) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
+        var document = await StorePendingDocumentWithoutMessageAsync(ownerId);
+
+        // As if the Worker had died while holding the message, e.g. next to another, hostile document.
+        await factory.Services.GetTestHarness().Bus.Publish(
+            new DocumentUploaded(document.Id.Value, ownerId.Value),
+            context => context.Headers.Set(DeliveryCount.DeliveryCountHeader, 1),
+            CancellationToken);
+
+        (await factory.ConsumedAsync<ProcessDocumentInIsolation>(message => message.DocumentId == document.Id.Value)).ShouldBeTrue();
+
+        // Processed normally: it fails only because this test stored no file for it.
+        var details = await client.WaitUntilProcessedAsync(document.Id.Value);
+        details.Status.ShouldBe(DocumentStatus.Failed);
+        details.FailureReason.ShouldBe("The file content is missing.");
+    }
+
+    [Fact]
+    public async Task Document_that_keeps_crashing_the_worker_on_its_own_is_failed()
+    {
+        var (client, ownerId) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
+        var document = await StorePendingDocumentWithoutMessageAsync(ownerId);
+
+        var endpoint = await factory.Services.GetTestHarness().Bus.GetSendEndpoint(IsolatedDocumentConsumerDefinition.QueueAddress);
+        await endpoint.Send(
+            new ProcessDocumentInIsolation(document.Id.Value),
+            context => context.Headers.Set(DeliveryCount.DeliveryCountHeader, IsolatedDocumentConsumer.MaxDeliveries),
+            CancellationToken);
+
+        var details = await client.WaitUntilProcessedAsync(document.Id.Value);
+        details.Status.ShouldBe(DocumentStatus.Failed);
+        details.FailureReason.ShouldBe(IsolatedDocumentConsumer.CrashedFailureReason);
+    }
+
+    // A pending document that has no DocumentUploaded message (nor file) of its own, so a test can deliver one.
+    private async Task<Document> StorePendingDocumentWithoutMessageAsync(UserId ownerId)
+    {
+        var document = Document.Upload(
+            DocumentId.New(), ownerId, new FileName("crash.pdf"), ContentType.Pdf, new FileSize(1024), DateTimeOffset.UtcNow);
+        document.ClearDomainEvents();
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        dbContext.Add(document);
+        await dbContext.SaveChangesAsync(CancellationToken);
+
+        return document;
     }
 
     [Fact]

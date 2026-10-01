@@ -104,6 +104,17 @@ sequenceDiagram
   - Nager.Date calls use `Microsoft.Extensions.Http.Resilience`.
 - **Dead-letter queue.** Once the retries are exhausted, the message moves to `document-uploaded_error`, and `DocumentUploadedFaultConsumer` marks the document `Failed` with a neutral reason. The technical details stay in the log and in the error queue.
 - **Worker crash.** The transaction rolls back, so the document is still `Pending`, and the unacknowledged message is redelivered. As a safeguard, the domain also lets a document that sat in `Processing` for more than 15 minutes be picked up again, although this flow never commits that state.
+- **A message that keeps crashing the Worker.** A crash never reaches the retry policy, so a hostile file could otherwise kill every Worker in turn, forever.
+  - The endpoints use RabbitMQ quorum queues, which count unacknowledged deliveries in transport headers (`x-delivery-count`, `x-acquired-count`).
+  - A dying Worker returns every message it held, including innocent documents processed next to the culprit. So a redelivered `DocumentUploaded` is not processed on the main endpoint. `DocumentUploadedConsumer` hands it to `document-processing-isolated`, which processes one document at a time (concurrency 1, prefetch 1).
+  - That endpoint runs in a Worker process of its own (`Worker:Role` = `Isolated`; the `full` profile's `worker-isolated` container), so a crash there can only be the doing of the document being processed. After 3 interrupted deliveries `IsolatedDocumentConsumer` marks it `Failed`. Run locally with the default role `All`, both endpoints share one process and that guarantee does not hold.
+  - The hand-over is sent to the endpoint's exchange: a `queue:` address would make the sender declare a classic queue, which RabbitMQ refuses for a quorum one.
+  - RabbitMQ silently drops what an exchange cannot route. A `Main` Worker therefore declares the isolated quorum queue and its binding on startup (`IsolatedQueueDeclarer`), so a hand-over is never lost before an `Isolated` Worker has started.
+  - The main endpoint fetches no more messages ahead than it processes (prefetch 4).
+- **Hostile input.**
+  - Text extraction stops after 500 pages, or once the text budget (60,000 characters) is exceeded. After one minute the Worker stops waiting and the document fails without a retry. PdfPig cannot be interrupted inside a page, so it runs on its own thread: the abandoned parse goes on until its next page check, costing only CPU within the container's limits.
+  - The Worker container has a 1 GB memory limit, so a parser that runs away hits the container's limit, not the host's.
+  - A Worker processes at most 4 documents at a time.
 - **Delete.** The row is removed, and the file is deleted afterwards by `DocumentDeletedConsumer`, fed from the outbox. A file is therefore never deleted for a transaction that rolled back. A redelivered message is harmless, because deleting a missing object succeeds.
 - **Calendar outage.** A Nager.Date failure never fails a document. The dates are saved with `CalendarCheck = null`, and the UI shows "Calendar check unavailable".
 
@@ -112,13 +123,19 @@ sequenceDiagram
 `ClaudeDocumentAnalyzer` sends one user message holding the document text, wrapped in `<document>` tags, and forces the `record_analysis` tool with `tool_choice`.
 
 - **Schema.** The tool's JSON schema defines the output: document type, summary, entities, important dates (with type and description), financial items (amount and ISO currency) and risks (with severity). The enum values in the schema are generated from the domain enums, so the schema and the code cannot drift apart.
-- **Prompt injection.** The system prompt says the document is untrusted data, and a closing tag inside the text is defused.
+- **Prompt injection.** The system prompt says the document is untrusted data. Any tag inside the text that could open or close the `<document>` block (`</document >`, `</ Document x>`, …) is rewritten into a harmless bracketed word.
 - **Validation.** The tool input is deserialized and checked by `AnalysisResultValidator`:
   - dates must be real `YYYY-MM-DD` values;
   - enum values must be known;
   - currencies must be three-letter codes;
   - lengths are bounded.
 - **One correction.** An invalid answer is sent back once as an `is_error` tool result that lists the problems. A second invalid answer fails the document.
+- **Logs.** The log records only where the answer was invalid (property and rule), never the values, because those may quote the document.
+- **Cost limits.**
+  - Before each analysis the Worker checks two daily caps in an append-only usage log (`AnalysisUsage`): `Documents:DailyAnalysisLimitPerUser` (50) and `Documents:DailyAnalysisLimit` across all users (500). Over a cap, the document fails and asks the owner to upload it again later.
+  - The log is saved with the outcome, so analyses that ended `Failed` after invalid answers count too. Deleting documents does not shrink it.
+  - Uploads are also limited per user: a quota of documents kept, and a token bucket for new uploads.
+  - Registration is limited per IP address, so the per-user limits cannot be multiplied with free accounts.
 - **No `temperature`:** newer models accept only the default.
 - **Fake analyzer.** Without an API key, `FakeDocumentAnalyzer` produces a deterministic analysis with regular expressions, so the whole pipeline runs offline and in tests.
 
@@ -130,11 +147,16 @@ sequenceDiagram
 - it checks for a public holiday through `IPublicHolidayProvider` (Nager.Date, cached per year and country for `Holidays:CacheDuration`);
 - it finds the next business day, skipping any mix of weekends and holidays.
 
-A document without dates makes no calls. Dates spread over several years make one call per distinct year.
+A document without dates makes no calls. Dates spread over several years make one call per distinct year. Only the 5 years closest to today are checked: the dates come from the model, which reads untrusted text. Dates in any other year are saved without a check.
 
 ## Authentication
 
 - **Accounts:** ASP.NET Core Identity (`AddIdentityCore`, no roles), with `Users` as the table name.
+- **Failed logins:** there is no account lockout, which would let anyone lock a known email out.
+  - Instead, `LoginAttemptThrottle` counts each login attempt before the password is checked, keyed by a hash of the email as Identity normalizes it, and refuses a client IP address after 5 attempts without a success for one account within 15 minutes. Counting first means concurrent guesses cannot all slip in before the first failure is recorded. The owner, signing in from another address, is not affected.
+  - Registration is limited to 5 per IP address per hour.
+  - Per-client limits count an IPv6 client by its /64 prefix, which one subscriber usually holds whole.
+  - Outside Development, the API refuses to start with a JWT signing key published in the repository.
 - **Access token:** a JWT (HMAC SHA-256) that lives for 15 minutes. `sub` is the user id.
 - **Refresh token:** 512 random bits. It is sent in an httpOnly, `Secure`, `SameSite=Strict` cookie scoped to `/api/auth`, and stored only as a SHA-256 hash.
 
@@ -202,6 +224,8 @@ flowchart LR
 ```
 
 - `docker compose up -d` starts the infrastructure only. The `full` profile adds `api`, `worker` and `ui`, all built from source.
+- **Published ports** are bound to `127.0.0.1`. The infrastructure uses public development credentials, and the S3 master, the RabbitMQ management UI and the Aspire Dashboard have no login of their own.
+- **Signing key.** The JWT signing key must be set in `.env`, since `.env.example` leaves it empty on purpose, and the API refuses to start without one.
 - **Images:** multi-stage builds that restore from the project files first, for layer caching. The .NET images run on `aspnet:10.0` as the non-root `app` user; the UI image runs `nginx-unprivileged`.
 - **Start order:**
   - the API waits for healthy Postgres, RabbitMQ and SeaweedFS, and applies the migrations before it reports healthy;

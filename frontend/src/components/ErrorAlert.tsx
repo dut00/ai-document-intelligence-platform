@@ -25,7 +25,8 @@ export function ErrorAlert({ error }: { error: unknown }) {
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 429) {
-      return 'Too many requests. Please wait a moment and try again.'
+      // The server says which limit it was (e.g. failed sign-ins for this account, for 15 minutes).
+      return error.problem?.detail ?? 'Too many requests. Please wait a moment and try again.'
     }
 
     return error.fieldErrors[0] ?? error.message

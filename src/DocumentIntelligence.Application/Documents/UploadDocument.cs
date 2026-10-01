@@ -6,6 +6,7 @@ using DocumentIntelligence.Domain.Documents;
 using DocumentIntelligence.Domain.Users;
 using FluentValidation;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace DocumentIntelligence.Application.Documents;
 
@@ -83,12 +84,20 @@ internal sealed partial class UploadDocumentCommandHandler(
     IDocumentRepository documents,
     IUnitOfWork unitOfWork,
     IFileStorage storage,
+    IOptions<DocumentLimitsOptions> limits,
     TimeProvider timeProvider,
     ILogger<UploadDocumentCommandHandler> logger)
     : ICommandHandler<UploadDocumentCommand, DocumentSummary>
 {
     public async Task<Result<DocumentSummary>> HandleAsync(UploadDocumentCommand command, CancellationToken cancellationToken)
     {
+        // Checked before anything is stored. Two uploads at the same moment can both pass: the quota
+        // bounds storage per user, it does not need to be exact.
+        if (await documents.CountByOwnerAsync(command.OwnerId, cancellationToken) >= limits.Value.MaxDocumentsPerUser)
+        {
+            return DocumentErrors.QuotaExceeded;
+        }
+
         var contentType = ContentType.FromMimeType(command.ContentType!);
         var document = Document.Upload(
             DocumentId.New(),

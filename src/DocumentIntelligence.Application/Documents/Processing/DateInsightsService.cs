@@ -8,9 +8,19 @@ namespace DocumentIntelligence.Application.Documents.Processing;
 /// Weekends are computed locally; public holidays come from <see cref="IPublicHolidayProvider"/>,
 /// fetched at most once per year involved (including a following year a next business day may fall into).
 /// </summary>
-internal sealed partial class DateInsightsService(IPublicHolidayProvider holidayProvider, ILogger<DateInsightsService> logger)
+/// <remarks>
+/// The dates come from the model, which reads untrusted text: a document listing dates in fifty different
+/// years would otherwise mean fifty sequential calendar requests. Only the <see cref="MaxCheckedYears"/>
+/// years closest to today are checked; dates in other years are saved without a check.
+/// </remarks>
+internal sealed partial class DateInsightsService(
+    IPublicHolidayProvider holidayProvider,
+    TimeProvider timeProvider,
+    ILogger<DateInsightsService> logger)
     : IDateInsightsService
 {
+    public const int MaxCheckedYears = 5;
+
     public async Task<IReadOnlyList<ImportantDate>> AddCalendarChecksAsync(
         IReadOnlyList<ImportantDate> dates,
         CancellationToken cancellationToken)
@@ -21,12 +31,19 @@ internal sealed partial class DateInsightsService(IPublicHolidayProvider holiday
         }
 
         var holidaysByYear = new Dictionary<int, Dictionary<DateOnly, string>>();
+        var checkedYears = SelectCheckedYears(dates);
 
         try
         {
             var checkedDates = new List<ImportantDate>(dates.Count);
             foreach (var date in dates)
             {
+                if (!checkedYears.Contains(date.Date.Year))
+                {
+                    checkedDates.Add(date);
+                    continue;
+                }
+
                 var calendarCheck = await CheckAsync(date.Date, holidaysByYear, cancellationToken);
                 checkedDates.Add(date.WithCalendarCheck(calendarCheck));
             }
@@ -39,6 +56,25 @@ internal sealed partial class DateInsightsService(IPublicHolidayProvider holiday
             LogCalendarUnavailable(logger, exception);
             return dates;
         }
+    }
+
+    private HashSet<int> SelectCheckedYears(IReadOnlyList<ImportantDate> dates)
+    {
+        var currentYear = timeProvider.GetUtcNow().Year;
+        var years = dates.Select(date => date.Date.Year).Distinct().ToList();
+
+        var checkedYears = years
+            .OrderBy(year => Math.Abs(year - currentYear))
+            .ThenBy(year => year)
+            .Take(MaxCheckedYears)
+            .ToHashSet();
+
+        if (checkedYears.Count < years.Count)
+        {
+            LogYearsNotChecked(logger, years.Count - checkedYears.Count, MaxCheckedYears);
+        }
+
+        return checkedYears;
     }
 
     private async Task<CalendarCheck> CheckAsync(
@@ -78,6 +114,9 @@ internal sealed partial class DateInsightsService(IPublicHolidayProvider holiday
 
     private static bool IsWeekend(DateOnly date) =>
         date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Dates in {Count} more years were saved without a calendar check (at most {MaxYears} years are checked per document)")]
+    private static partial void LogYearsNotChecked(ILogger logger, int count, int maxYears);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Public holiday calendar unavailable; saving dates without a calendar check")]
     private static partial void LogCalendarUnavailable(ILogger logger, Exception exception);

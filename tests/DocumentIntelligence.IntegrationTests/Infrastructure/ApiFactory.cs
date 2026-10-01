@@ -54,6 +54,17 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     public const int UploadTokenLimit = 5;
 
     /// <summary>
+    /// Accounts one client IP address may create per hour.
+    /// </summary>
+    public const int RegisterPermitLimit = 3;
+
+    /// <summary>
+    /// Failed logins for one account from one client IP address before that address is refused.
+    /// Below <see cref="AuthPermitLimit"/>, so the throttle is reached before the per-IP limit.
+    /// </summary>
+    public const int LoginAttemptsPerAccount = 3;
+
+    /// <summary>
     /// An address whose X-Forwarded-For header the API believes, as it would a reverse proxy's. It is
     /// trusted as part of a network, the way the Docker "full" profile trusts the compose network.
     /// </summary>
@@ -208,6 +219,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
         builder.UseSetting("RateLimiting:AuthPermitLimit", AuthPermitLimit.ToString(CultureInfo.InvariantCulture));
         builder.UseSetting("RateLimiting:UploadTokenLimit", UploadTokenLimit.ToString(CultureInfo.InvariantCulture));
+        builder.UseSetting("RateLimiting:RegisterPermitLimit", RegisterPermitLimit.ToString(CultureInfo.InvariantCulture));
+        builder.UseSetting("RateLimiting:LoginAttemptsPerAccount", LoginAttemptsPerAccount.ToString(CultureInfo.InvariantCulture));
         builder.UseSetting("RateLimiting:UploadTokensPerPeriod", "1");
         builder.UseSetting("RateLimiting:UploadReplenishmentPeriod", "01:00:00");
         builder.UseSetting("ForwardedHeaders:KnownNetworks:0", TrustedProxyNetwork);

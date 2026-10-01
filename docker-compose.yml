@@ -4,6 +4,12 @@
 
 name: document-intelligence
 
+# Every published port is bound to 127.0.0.1: the credentials below are public development defaults,
+# and the S3 master, RabbitMQ management and Aspire Dashboard have no authentication of their own.
+# Publishing a port on all interfaces (e.g. to reach the app from another machine) needs real
+# credentials in .env first. (The UI must be reached as http://localhost anyway: the refresh cookie
+# is Secure, and browsers accept that over plain HTTP only on localhost.)
+
 # Settings the API and the Worker share in the "full" profile; the rest comes from their appsettings.json.
 x-app-environment: &app-environment
   DOTNET_ENVIRONMENT: Production
@@ -25,7 +31,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -40,8 +46,8 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     ports:
-      - "5672:5672"   # AMQP
-      - "15672:15672" # management UI
+      - "127.0.0.1:5672:5672"   # AMQP
+      - "127.0.0.1:15672:15672" # management UI
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
@@ -55,8 +61,8 @@ services:
     image: chrislusf/seaweedfs:4.47
     command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
     ports:
-      - "8333:8333" # S3 API
-      - "9333:9333" # master UI
+      - "127.0.0.1:8333:8333" # S3 API
+      - "127.0.0.1:9333:9333" # master UI
     volumes:
       - seaweedfs-data:/data
       - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
@@ -74,8 +80,8 @@ services:
       DASHBOARD__FRONTEND__AUTHMODE: Unsecured
       DASHBOARD__OTLP__AUTHMODE: Unsecured
     ports:
-      - "18888:18888" # dashboard UI
-      - "4317:18889"  # OTLP gRPC
+      - "127.0.0.1:18888:18888" # dashboard UI
+      - "127.0.0.1:4317:18889"  # OTLP gRPC
 
   # Profile "full": the application itself, built from source.
 
@@ -103,16 +109,38 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # New documents, deletions and faults. A document whose delivery was interrupted (the Worker died
+  # while holding it) is handed on to worker-isolated rather than processed here again.
   worker:
     profiles: [full]
     build:
       context: .
       dockerfile: src/DocumentIntelligence.Worker/Dockerfile
+    # A hostile PDF can make the parser allocate heavily: the container, not the host, runs out of memory.
+    mem_limit: 1g
     environment:
       <<: *app-environment
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      Worker__Role: Main
     depends_on:
       # The API applies the migrations; it reports healthy only once they are done.
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Redelivered documents, one at a time, in a process of their own: a crash here can only be the doing
+  # of the document being processed, which is failed after 3 such crashes (IsolatedDocumentConsumer).
+  worker-isolated:
+    profiles: [full]
+    build:
+      context: .
+      dockerfile: src/DocumentIntelligence.Worker/Dockerfile
+    mem_limit: 1g
+    environment:
+      <<: *app-environment
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      Worker__Role: Isolated
+    depends_on:
       api:
         condition: service_healthy
     restart: unless-stopped
@@ -122,7 +150,7 @@ services:
     profiles: [full]
     build: frontend
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       api:
         condition: service_healthy

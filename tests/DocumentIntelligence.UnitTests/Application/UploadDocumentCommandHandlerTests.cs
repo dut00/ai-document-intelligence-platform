@@ -5,6 +5,7 @@ using DocumentIntelligence.Domain.Documents;
 using DocumentIntelligence.Domain.Documents.Events;
 using DocumentIntelligence.Domain.Users;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -20,9 +21,11 @@ public sealed class UploadDocumentCommandHandlerTests
     private readonly IFileStorage _storage = Substitute.For<IFileStorage>();
     private readonly UploadDocumentCommandHandler _handler;
 
+    private readonly DocumentLimitsOptions _limits = new() { MaxDocumentsPerUser = 3 };
+
     public UploadDocumentCommandHandlerTests() =>
         _handler = new UploadDocumentCommandHandler(
-            _documents, _unitOfWork, _storage, new FakeTimeProvider(_now), NullLogger<UploadDocumentCommandHandler>.Instance);
+            _documents, _unitOfWork, _storage, Options.Create(_limits), new FakeTimeProvider(_now), NullLogger<UploadDocumentCommandHandler>.Instance);
 
     private static CancellationToken CancellationToken => TestContext.Current.CancellationToken;
 
@@ -38,11 +41,25 @@ public sealed class UploadDocumentCommandHandlerTests
         result.Value.Status.ShouldBe(DocumentStatus.Pending);
         result.Value.UploadedAt.ShouldBe(_now);
 
-        var document = (Document)_documents.ReceivedCalls().Single().GetArguments()[0]!;
+        var document = (Document)_documents.ReceivedCalls()
+            .Single(call => call.GetMethodInfo().Name == nameof(IDocumentRepository.Add)).GetArguments()[0]!;
         document.OwnerId.ShouldBe(ownerId);
         document.DomainEvents.ShouldHaveSingleItem().ShouldBeOfType<DocumentUploadedDomainEvent>();
         await _storage.Received(1).UploadAsync(document.StorageKey, command.Content, ContentType.Txt, Arg.Any<CancellationToken>());
         await _unitOfWork.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Owner_at_the_document_quota_is_refused_before_anything_is_stored()
+    {
+        var ownerId = UserId.New();
+        _documents.CountByOwnerAsync(ownerId, Arg.Any<CancellationToken>()).Returns(_limits.MaxDocumentsPerUser);
+
+        var result = await _handler.HandleAsync(Command(ownerId), CancellationToken);
+
+        result.Error.ShouldBe(DocumentErrors.QuotaExceeded);
+        await _storage.DidNotReceiveWithAnyArgs().UploadAsync(default!, default!, default!, CancellationToken);
+        _documents.DidNotReceiveWithAnyArgs().Add(default!);
     }
 
     [Fact]

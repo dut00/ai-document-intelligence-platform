@@ -15,6 +15,25 @@ public sealed class RateLimitingOptions
     public TimeSpan AuthWindow { get; init; } = TimeSpan.FromMinutes(1);
 
     /// <summary>
+    /// Accounts one client IP address can create per <see cref="RegisterWindow"/>, on top of the auth limit.
+    /// Every account gets its own upload allowance, so cheap accounts would multiply it.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int RegisterPermitLimit { get; init; } = 5;
+
+    public TimeSpan RegisterWindow { get; init; } = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Login attempts without a success for one account from one client IP address within
+    /// <see cref="LoginAttemptWindow"/>; further attempts from that address are refused. Unlike an account
+    /// lockout, this does not let a stranger lock the owner out: the owner signs in from another address.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int LoginAttemptsPerAccount { get; init; } = 5;
+
+    public TimeSpan LoginAttemptWindow { get; init; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>
     /// Uploads a user can make in a burst; every upload costs an AI analysis.
     /// </summary>
     [Range(1, int.MaxValue)]

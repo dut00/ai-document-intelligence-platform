@@ -14,6 +14,11 @@ internal static class RateLimitingExtensions
     public const string AuthPolicy = "auth";
 
     /// <summary>
+    /// Fixed window per client IP address on account creation, much stricter than <see cref="AuthPolicy"/>.
+    /// </summary>
+    public const string RegisterPolicy = "register";
+
+    /// <summary>
     /// Token bucket per user: allows a burst of uploads, then a steady rate that bounds the AI cost.
     /// </summary>
     public const string UploadPolicy = "upload";
@@ -25,6 +30,9 @@ internal static class RateLimitingExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        services.AddMemoryCache();
+        services.AddScoped<LoginAttemptThrottle>();
+
         services.AddRateLimiter(limiter =>
         {
             limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -35,11 +43,25 @@ internal static class RateLimitingExtensions
                 var options = GetOptions(context);
 
                 return RateLimitPartition.GetFixedWindowLimiter(
-                    context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                    ClientPartition.For(context.Connection.RemoteIpAddress),
                     _ => new FixedWindowRateLimiterOptions
                     {
                         PermitLimit = options.AuthPermitLimit,
                         Window = options.AuthWindow,
+                        QueueLimit = 0,
+                    });
+            });
+
+            limiter.AddPolicy(RegisterPolicy, context =>
+            {
+                var options = GetOptions(context);
+
+                return RateLimitPartition.GetFixedWindowLimiter(
+                    ClientPartition.For(context.Connection.RemoteIpAddress),
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = options.RegisterPermitLimit,
+                        Window = options.RegisterWindow,
                         QueueLimit = 0,
                     });
             });

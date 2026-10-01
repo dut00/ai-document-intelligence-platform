@@ -8,6 +8,7 @@ using DocumentIntelligence.Application.Abstractions.Calendar;
 using DocumentIntelligence.Application.Abstractions.Data;
 using DocumentIntelligence.Application.Abstractions.Messaging;
 using DocumentIntelligence.Application.Abstractions.Storage;
+using DocumentIntelligence.Application.Documents;
 using DocumentIntelligence.Domain.Abstractions;
 using DocumentIntelligence.Domain.Documents;
 using DocumentIntelligence.Infrastructure.Analysis;
@@ -26,6 +27,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
@@ -52,6 +54,11 @@ public static class DependencyInjection
     {
         services.TryAddSingleton(TimeProvider.System);
 
+        services.AddOptions<DocumentLimitsOptions>()
+            .BindConfiguration(DocumentLimitsOptions.SectionName)
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
         services.AddPersistence(configuration);
         services.AddUserAccounts();
         services.AddStorage();
@@ -68,7 +75,11 @@ public static class DependencyInjection
     /// </summary>
     public static IServiceCollection AddJwtAuthentication(this IServiceCollection services)
     {
-        services.AddOptions<JwtOptions>().ValidateOnStart();
+        services.AddOptions<JwtOptions>()
+            .Validate<IHostEnvironment>(
+                (options, environment) => environment.IsDevelopment() || !JwtOptions.PublishedSigningKeys.Contains(options.SigningKey),
+                "Jwt:SigningKey is a key published in the repository; set a secret one (e.g. openssl rand -base64 48).")
+            .ValidateOnStart();
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
         services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
@@ -107,6 +118,7 @@ public static class DependencyInjection
         services.AddScoped<IUnitOfWork>(provider => provider.GetRequiredService<ApplicationDbContext>());
         services.AddScoped<IReadDbContext>(provider => provider.GetRequiredService<ApplicationDbContext>());
         services.AddScoped<IDocumentRepository, DocumentRepository>();
+        services.AddScoped<IAnalysisUsageLog, AnalysisUsageLog>();
 
         services.AddHealthChecks().AddDbContextCheck<ApplicationDbContext>("postgres", tags: [ReadyTag]);
     }
@@ -121,8 +133,7 @@ public static class DependencyInjection
                 options.User.RequireUniqueEmail = true;
                 options.Password.RequiredLength = 8;
                 options.Password.RequireNonAlphanumeric = false;
-                options.Lockout.MaxFailedAccessAttempts = 5;
-                options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+                options.Lockout.AllowedForNewUsers = false;
             })
             .AddEntityFrameworkStores<ApplicationDbContext>();
 
@@ -258,6 +269,13 @@ public static class DependencyInjection
                 {
                     endpoint.DiscardFaultedMessages();
                     return;
+                }
+
+                // Quorum queues count deliveries that were never acknowledged (a crashed consumer), which
+                // DocumentUploadedConsumer uses to stop a message that keeps killing the Worker.
+                if (endpoint is IRabbitMqReceiveEndpointConfigurator rabbit)
+                {
+                    rabbit.SetQuorumQueue();
                 }
 
                 var retry = context.GetRequiredService<IOptions<MessageRetryOptions>>().Value;

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Anthropic.Models.Messages;
 using DocumentIntelligence.Domain.Documents.Analysis;
 
@@ -20,6 +21,12 @@ internal static class RecordAnalysisTool
         Always answer by calling the record_analysis tool.
         """;
 
+    // The text is untrusted and up to 60,000 characters: the non-backtracking engine matches in linear
+    // time, where a backtracking one could be made to spend seconds on "<" followed by blanks.
+    private static readonly Regex _documentTag = new(
+        @"<\s*(/?)\s*document\b[^>]*>",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+
     public static readonly Tool Definition = new()
     {
         Name = Name,
@@ -33,9 +40,17 @@ internal static class RecordAnalysisTool
         Analyze the document below.
 
         <document>
-        {documentText.Replace("</document>", "</ document>", StringComparison.OrdinalIgnoreCase)}
+        {DefuseDocumentTags(documentText)}
         </document>
         """;
+
+    /// <summary>
+    /// The document must not be able to end the data block it is wrapped in: any tag that could read as
+    /// an opening or closing document tag (<c>&lt;/document&gt;</c>, <c>&lt;/ Document foo&gt;</c>, ...)
+    /// becomes a harmless bracketed word.
+    /// </summary>
+    public static string DefuseDocumentTags(string documentText) =>
+        _documentTag.Replace(documentText, "[$1document]");
 
     public static string CreateCorrection(IEnumerable<string> errors) =>
         $"""

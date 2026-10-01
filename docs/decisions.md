@@ -24,6 +24,7 @@ Each record is short: the context, the decision, what it costs, and what else wa
 | [018](#018-integration-tests-against-real-infrastructure) | Integration tests against real infrastructure |
 | [019](#019-infrastructure-in-docker-apps-on-the-host-plus-a-full-profile) | Infrastructure in Docker, apps on the host, plus a `full` profile |
 | [020](#020-one-origin-behind-nginx-with-trusted-forwarded-headers) | One origin behind nginx, with trusted forwarded headers |
+| [021](#021-abuse-and-cost-limits-from-the-security-audit) | Abuse and cost limits, from the security audit |
 
 ---
 
@@ -89,6 +90,8 @@ Each record is short: the context, the decision, what it costs, and what else wa
 **Decision.** `UseMessageRetry` with exponential intervals (`Messaging:Retry`, by default 5 retries from 1 s to 30 s), on top of the Anthropic SDK's own retries. Once the retries run out, a `Fault<DocumentUploaded>` consumer marks the document `Failed`.
 
 **Consequences.** A retrying message keeps its consumer slot for the whole sequence: the backoff adds about a minute on top of the attempts themselves, and each attempt can include a slow Claude call. That is acceptable at this scale, and it works with a stock broker.
+
+A crash of the Worker process never reaches this policy. The endpoints therefore use quorum queues, whose `x-delivery-count` header lets the consumer fail a document after 3 unacknowledged deliveries, instead of letting it kill Workers forever ([021](#021-abuse-and-cost-limits-from-the-security-audit)).
 
 **Alternatives.** Delayed redelivery with a custom RabbitMQ image, or a scheduler (Quartz or Hangfire): more moving parts.
 
@@ -179,7 +182,7 @@ Each record is short: the context, the decision, what it costs, and what else wa
 **Context.** The SPA needs register, login, refresh and logout, with a refresh token the browser's JavaScript cannot read.
 
 **Decision.**
-- `AddIdentityCore` provides password hashing, user storage and lockout.
+- `AddIdentityCore` provides password hashing and user storage. Its account lockout is off: a lockout lets anyone lock a known email out. Failed logins are throttled per client IP address and account instead ([021](#021-abuse-and-cost-limits-from-the-security-audit)).
 - JWT access tokens are issued by `JwtAccessTokenIssuer`, and refresh tokens are handled by `RefreshTokenStore`. There are no roles.
 
 **Consequences.** There is full control over token lifetimes, rotation and the cookie, at the cost of owning that code and its tests.
@@ -298,3 +301,47 @@ Each record is short: the context, the decision, what it costs, and what else wa
 **Alternatives.**
 - `ASPNETCORE_FORWARDEDHEADERS_ENABLED`: it trusts everyone.
 - A fixed compose subnet: it can collide with existing networks.
+
+## 021. Abuse and cost limits, from the security audit
+
+**Context.** The first whole-repository run of the `security-reviewer` agent found no critical or high issues. It did find several ways an ordinary registered user, or anyone on the same network, could cost the operator money or availability:
+- the infrastructure ports were published on all interfaces, with public development credentials;
+- a hostile PDF could exhaust the Worker, and a crash would be redelivered forever;
+- free accounts multiplied the per-user upload limit;
+- five failed logins locked any known account;
+- a published JWT key was accepted in Production;
+- model output could reach the logs, and could drive dozens of calendar requests per document;
+- the document delimiter was defused only in its exact spelling;
+- a huge page number caused a 500.
+
+**Decision.**
+- **Network and keys.** Every published port is bound to `127.0.0.1`. `.env.example` leaves `JWT_SIGNING_KEY` empty, and outside Development the API refuses to start with any key published in the repository (`JwtOptions.PublishedSigningKeys`).
+- **Hostile files.**
+  - Text extraction stops after 500 pages or once past the 60,000-character budget, and gives up after one minute (the document fails, with no retry). The parser cannot be interrupted inside a page, so it runs on its own thread and the Worker stops waiting for it; the abandoned parse ends at its next page check.
+  - The Worker container has a 1 GB memory limit, and a Worker processes (and prefetches) at most 4 documents at a time.
+  - Quorum queues count unacknowledged deliveries. A crash returns every message the Worker held, the innocent ones included, so a redelivered document is handed to a separate endpoint that processes one at a time, in a Worker process of its own (`Worker:Role`, the `worker-isolated` container). Only there, after 3 interrupted deliveries, is a document failed.
+- **Cost.**
+  - Registration is limited to 5 per IP address per hour.
+  - A user keeps at most 200 documents (`Documents:MaxDocumentsPerUser`).
+  - At most 50 documents per user and 500 across all users are analyzed in any 24 hours (`Documents:DailyAnalysisLimitPerUser`, `Documents:DailyAnalysisLimit`). Beyond that, a document fails with a request to upload it again later.
+  - The caps count an append-only usage log, which deleting documents does not shrink, and which includes analyses that failed after invalid answers.
+  - Only the 5 years closest to today are checked against the holiday calendar.
+- **Logins.** The Identity lockout is replaced by `LoginAttemptThrottle`.
+  - Each attempt is counted before the password is checked, so concurrent guesses cannot slip past it. After 5 attempts without a success for an account from one IP address within 15 minutes, that address is refused; the owner, on another address, is not affected.
+  - The key is a hash of the email as Identity normalizes it, so Unicode look-alikes share a budget and no attacker-sized string is kept.
+  - IPv6 clients are counted per /64 prefix, here and in the rate limits.
+- **AI output.** Any tag variant that could open or close the `<document>` block is defused with a non-backtracking regular expression (linear time on hostile input). Logs record only where the analysis was invalid, not the values.
+- **Input.** `page` has an upper bound, so the row offset cannot overflow.
+
+**Consequences.**
+- The limits are approximate: two uploads, or two Workers, at the same moment can both pass. They bound cost and storage; they are not accounting.
+- The login throttle and the rate limits live in each API instance's memory, so N instances allow N times the attempts.
+- Existing local RabbitMQ volumes still hold the classic queues created before this change. They must be deleted once (or the volume recreated), because a queue's type cannot change.
+- A process-level crash inside the PDF parser (e.g. a stack overflow) still kills the Worker, but now only 3 times per document, and documents that were merely in flight are processed again rather than failed.
+- An abandoned PDF parse keeps a thread busy until its next page check; the container's limits bound the cost.
+- A busy user can exhaust their own daily allowance, and many accounts from many addresses can still exhaust the overall one: that is the price of a hard cost ceiling.
+
+**Alternatives.**
+- Running the PDF parser in a separate sandboxed process: stronger isolation, much more complexity.
+- A distributed store (Redis) for the rate limits and the login throttle: needed only with several API instances.
+- Email verification before an account can upload: out of scope ([SPEC](../SPEC.md)).

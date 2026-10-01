@@ -2,6 +2,7 @@ using DocumentIntelligence.Application.Abstractions.Calendar;
 using DocumentIntelligence.Application.Documents.Processing;
 using DocumentIntelligence.Domain.Documents.Analysis;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 
@@ -16,7 +17,7 @@ public sealed class DateInsightsServiceTests
     {
         _holidays.GetPublicHolidaysAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(call => Holidays((int)call[0]));
-        _service = new DateInsightsService(_holidays, NullLogger<DateInsightsService>.Instance);
+        _service = new DateInsightsService(_holidays, new FakeTimeProvider(new DateTimeOffset(2026, 9, 30, 12, 0, 0, TimeSpan.Zero)), NullLogger<DateInsightsService>.Instance);
     }
 
     private static CancellationToken CancellationToken => TestContext.Current.CancellationToken;
@@ -84,6 +85,21 @@ public sealed class DateInsightsServiceTests
 
         await _holidays.Received(1).GetPublicHolidaysAsync(2026, Arg.Any<CancellationToken>());
         await _holidays.Received(1).GetPublicHolidaysAsync(2027, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Only_the_years_closest_to_today_are_checked()
+    {
+        // Today is in 2026; 1990 and 2070 are the farthest of seven distinct years.
+        int[] years = [1990, 2024, 2025, 2026, 2027, 2028, 2070];
+        var dates = years.Select(year => Date(new DateOnly(year, 3, 3))).ToList();
+
+        var result = await _service.AddCalendarChecksAsync(dates, CancellationToken);
+
+        years.Length.ShouldBe(DateInsightsService.MaxCheckedYears + 2);
+        result.Where(date => date.CalendarCheck is null).Select(date => date.Date.Year).ShouldBe([1990, 2070]);
+        await _holidays.DidNotReceive().GetPublicHolidaysAsync(1990, Arg.Any<CancellationToken>());
+        await _holidays.DidNotReceive().GetPublicHolidaysAsync(2070, Arg.Any<CancellationToken>());
     }
 
     [Fact]

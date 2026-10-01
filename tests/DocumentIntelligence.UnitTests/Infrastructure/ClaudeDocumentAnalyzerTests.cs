@@ -7,7 +7,7 @@ using Anthropic.Exceptions;
 using DocumentIntelligence.Application.Abstractions.Analysis;
 using DocumentIntelligence.Application.Documents.Processing;
 using DocumentIntelligence.Infrastructure.Analysis;
-using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
 
 namespace DocumentIntelligence.UnitTests.Infrastructure;
@@ -30,6 +30,7 @@ public sealed class ClaudeDocumentAnalyzerTests : IDisposable
     };
 
     private readonly StubHttpMessageHandler _handler = new();
+    private readonly FakeLogger<ClaudeDocumentAnalyzer> _logger = new();
     private readonly AnthropicClient _client;
     private readonly ClaudeDocumentAnalyzer _analyzer;
 
@@ -45,7 +46,7 @@ public sealed class ClaudeDocumentAnalyzerTests : IDisposable
             _client,
             new AnalysisResultValidator(),
             Options.Create(new AnthropicOptions { ApiKey = "test-key", Model = Model }),
-            NullLogger<ClaudeDocumentAnalyzer>.Instance);
+            _logger);
     }
 
     private static CancellationToken CancellationToken => TestContext.Current.CancellationToken;
@@ -98,6 +99,12 @@ public sealed class ClaudeDocumentAnalyzerTests : IDisposable
         toolResult["tool_use_id"]!.GetValue<string>().ShouldBe("toolu_first");
         toolResult["is_error"]!.GetValue<bool>().ShouldBeTrue();
         toolResult["content"]!.GetValue<string>().ShouldContain("ImportantDates[0].Date");
+        toolResult["content"]!.GetValue<string>().ShouldContain("11.11.2026");
+
+        // The log names the problem, but not the value: model output may carry document text.
+        var logged = _logger.Collector.GetSnapshot().ShouldHaveSingleItem().Message;
+        logged.ShouldContain("ImportantDates[0].Date");
+        logged.ShouldNotContain("11.11.2026");
     }
 
     [Fact]

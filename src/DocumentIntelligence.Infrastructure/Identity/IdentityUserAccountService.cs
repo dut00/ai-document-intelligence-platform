@@ -38,19 +38,13 @@ internal sealed class IdentityUserAccountService(UserManager<ApplicationUser> us
     {
         var user = await userManager.FindByEmailAsync(email);
 
-        // The same error for unknown users, wrong passwords and locked accounts avoids revealing which emails exist.
-        if (user is null || await userManager.IsLockedOutAsync(user))
+        // The same error for unknown users and wrong passwords avoids revealing which emails exist.
+        // There is no account lockout: it would let anyone lock a known email out. The API throttles
+        // failures per client address and account instead (LoginAttemptThrottle).
+        if (user is null || !await userManager.CheckPasswordAsync(user, password))
         {
             return AuthErrors.InvalidCredentials;
         }
-
-        if (!await userManager.CheckPasswordAsync(user, password))
-        {
-            await userManager.AccessFailedAsync(user);
-            return AuthErrors.InvalidCredentials;
-        }
-
-        await userManager.ResetAccessFailedCountAsync(user);
 
         return ToAccount(user);
     }

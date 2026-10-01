@@ -10,5 +10,9 @@ public interface ITextExtractor
 {
     bool CanExtract(ContentType contentType);
 
-    Task<string> ExtractTextAsync(Stream content, CancellationToken cancellationToken);
+    /// <summary>
+    /// Reads the text, stopping once more than <paramref name="maxCharacters"/> characters were read:
+    /// the rest would be cut off anyway, and a hostile file should not be read to the end.
+    /// </summary>
+    Task<string> ExtractTextAsync(Stream content, int maxCharacters, CancellationToken cancellationToken);
 }

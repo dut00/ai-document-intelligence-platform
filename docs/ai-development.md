@@ -104,6 +104,27 @@ The reviewer found real problems in every step that went through it. Some exampl
 - `/health/ready`, a list of every dependency and its state, was public through nginx. Only `/health/live` is proxied now.
 - The trusted-network path the compose file actually uses (`KnownNetworks`) had no test. The test fixture now trusts a network rather than a single address.
 
+**First security audit** (the `security-reviewer` agent, whole repository)
+
+The audit found no critical or high issues. It did find 3 medium and 6 low ones, all fixed in one change ([ADR 021](decisions.md#021-abuse-and-cost-limits-from-the-security-audit)):
+
+- **(medium) Infrastructure ports and credentials.** The infrastructure ports were published on all interfaces, with public development credentials.
+- **(medium) Hostile PDFs.** A hostile PDF could exhaust the Worker, and a crash would be redelivered forever. The fix is a quorum-queue delivery count.
+  - The first implementation read the count from `context.Headers`, which in MassTransit holds the message envelope's headers. The test harness passed, but a manual run against a real RabbitMQ showed the count never arrived. It is a transport header (`ReceiveContext.TransportHeaders`).
+  - The reviewer and the security reviewer then found that the guard also failed innocent documents in flight next to a crashing one, which led to the isolation endpoint.
+  - The real broker caught one more problem the in-memory transport could not. A `queue:` send address made the sender declare a classic queue, which RabbitMQ refused for the quorum one, so the hand-over now goes through the endpoint's exchange.
+- **(follow-up) The fixes' own review** found three more problems:
+  - the daily cap could be bypassed by deleting analyzed documents (now an append-only usage log, with a per-user cap);
+  - the new login throttle kept attacker-sized emails in memory (now a hash of the normalized email);
+  - the defusal regex could backtrack quadratically (now non-backtracking).
+- **(medium) Free accounts.** Free accounts multiplied the per-user upload limit.
+- **(low) Lockout.** An account lockout that anyone could trigger.
+- **(low) JWT key.** A published JWT key that Production accepted.
+- **(low) Paging.** An unbounded page number.
+- **(low) Delimiter.** A document delimiter defused only in its exact spelling.
+- **(low) Logs.** Model output in the logs.
+- **(low) Calendar calls.** Dates driving dozens of calendar calls.
+
 ## What worked, and what needed a human
 
 - **Asking before planning paid off.** The question rounds brought up constraints a one-shot plan would have guessed wrong: the licenses, the branch name, the external API, and the date split.

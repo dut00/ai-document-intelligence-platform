@@ -6,6 +6,16 @@ public sealed class JwtOptions
 {
     public const string SectionName = "Jwt";
 
+    /// <summary>
+    /// Keys that appear in this public repository (appsettings.Development.json, and an earlier
+    /// .env.example). Anyone could sign tokens with them, so they are refused outside Development.
+    /// </summary>
+    public static readonly IReadOnlySet<string> PublishedSigningKeys = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "local-development-signing-key-not-for-production-use",
+        "local-docker-signing-key-not-for-production-use",
+    };
+
     [Required]
     public string Issuer { get; init; } = string.Empty;
 

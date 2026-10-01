@@ -1,3 +1,4 @@
+using System.Globalization;
 using DocumentIntelligence.Api.Authentication;
 using DocumentIntelligence.Api.Extensions;
 using DocumentIntelligence.Api.RateLimiting;
@@ -13,9 +14,10 @@ internal static class AuthEndpoints
     {
         var group = app.MapGroup("/api/auth").WithTags("Auth");
 
+        // An endpoint has one rate-limit policy; the register one is stricter than the auth one in every window.
         group.MapPost("/register", RegisterAsync)
             .AllowAnonymous()
-            .RequireRateLimiting(RateLimitingExtensions.AuthPolicy)
+            .RequireRateLimiting(RateLimitingExtensions.RegisterPolicy)
             .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .Produces<UserResponse>(StatusCodes.Status201Created)
             .ProducesValidationProblem()
@@ -65,14 +67,32 @@ internal static class AuthEndpoints
     private static async Task<IResult> LoginAsync(
         LoginCommand command,
         ICommandHandler<LoginCommand, AuthTokens> handler,
-        HttpResponse response,
+        LoginAttemptThrottle throttle,
+        HttpContext context,
         CancellationToken cancellationToken)
     {
+        var client = context.Connection.RemoteIpAddress;
+
+        // Refused before the password is checked, so the answer says nothing about whether it was right.
+        if (!throttle.TryBeginAttempt(client, command.Email, out var retryAfter))
+        {
+            context.Response.Headers.RetryAfter = ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status429TooManyRequests,
+                title: "Too many requests.",
+                detail: "Too many failed sign-in attempts for this account. Try again later.");
+        }
+
         var result = await handler.HandleAsync(command, cancellationToken);
 
-        return result.IsSuccess
-            ? IssueTokens(response, result.Value)
-            : result.Error!.ToProblem();
+        if (result.IsSuccess)
+        {
+            throttle.Succeeded(client, command.Email);
+            return IssueTokens(context.Response, result.Value);
+        }
+
+        return result.Error!.ToProblem();
     }
 
     private static async Task<IResult> RefreshAsync(

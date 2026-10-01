@@ -2,6 +2,7 @@ using System.Text;
 using DocumentIntelligence.Application.Abstractions.Analysis;
 using DocumentIntelligence.Application.Abstractions.Calendar;
 using DocumentIntelligence.Application.Abstractions.Storage;
+using DocumentIntelligence.Application.Documents;
 using DocumentIntelligence.Application.Documents.Processing;
 using DocumentIntelligence.Domain.Abstractions;
 using DocumentIntelligence.Domain.Documents;
@@ -10,6 +11,7 @@ using DocumentIntelligence.Domain.Documents.Events;
 using DocumentIntelligence.Domain.Users;
 using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -27,6 +29,8 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
     private readonly ITextExtractor _extractor = Substitute.For<ITextExtractor>();
     private readonly IDocumentAnalyzer _analyzer = Substitute.For<IDocumentAnalyzer>();
     private readonly IPublicHolidayProvider _holidays = Substitute.For<IPublicHolidayProvider>();
+    private readonly DocumentLimitsOptions _limits = new() { DailyAnalysisLimit = 10, DailyAnalysisLimitPerUser = 3 };
+    private readonly IAnalysisUsageLog _usageLog = Substitute.For<IAnalysisUsageLog>();
     private readonly TestMeterFactory _meterFactory = new();
     private readonly MetricCollector<long> _processed;
     private readonly MetricCollector<double> _analysisDuration;
@@ -37,7 +41,7 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
         _storage.OpenReadAsync(Arg.Any<StorageKey>(), Arg.Any<CancellationToken>())
             .Returns(_ => new MemoryStream(Encoding.UTF8.GetBytes(DocumentText)));
         _extractor.CanExtract(ContentType.Txt).Returns(true);
-        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<CancellationToken>()).Returns(DocumentText);
+        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(DocumentText);
         _analyzer.Model.Returns("test-model");
         _analyzer.AnalyzeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(AnalysisResult());
         _holidays.GetPublicHolidaysAsync(2026, Arg.Any<CancellationToken>())
@@ -52,7 +56,9 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
             _storage,
             [_extractor],
             _analyzer,
-            new DateInsightsService(_holidays, NullLogger<DateInsightsService>.Instance),
+            new DateInsightsService(_holidays, _time, NullLogger<DateInsightsService>.Instance),
+            _usageLog,
+            Options.Create(_limits),
             _time,
             new DocumentProcessingMetrics(_meterFactory),
             NullLogger<ProcessDocumentCommandHandler>.Instance);
@@ -161,7 +167,7 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
     [Fact]
     public async Task Document_without_text_fails_without_calling_the_analyzer()
     {
-        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<CancellationToken>()).Returns("  \n ");
+        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns("  \n ");
         var document = Stored(PendingDocument());
 
         var outcome = await ProcessAsync(document);
@@ -236,9 +242,85 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
     }
 
     [Fact]
+    public async Task Analysis_is_recorded_in_the_usage_log()
+    {
+        var document = Stored(PendingDocument());
+
+        await ProcessAsync(document);
+
+        await _usageLog.Received(1).RecordAsync(document.OwnerId, document.Id, _time.GetUtcNow(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Retried_document_that_was_already_counted_is_analyzed_despite_a_full_limit()
+    {
+        var document = Stored(PendingDocument());
+        _usageLog.IsRecordedAsync(document.Id, Arg.Any<CancellationToken>()).Returns(true);
+        _usageLog.CountSinceAsync(Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>()).Returns(_limits.DailyAnalysisLimit);
+
+        var outcome = await ProcessAsync(document);
+
+        outcome.ShouldBe(ProcessingOutcome.Completed);
+        await _usageLog.DidNotReceiveWithAnyArgs().RecordAsync(default!, default!, default, CancellationToken);
+    }
+
+    [Fact]
+    public async Task Document_beyond_the_overall_daily_analysis_limit_fails_without_calling_the_analyzer()
+    {
+        _usageLog.CountSinceAsync(_time.GetUtcNow().AddDays(-1), Arg.Any<CancellationToken>()).Returns(_limits.DailyAnalysisLimit);
+        var document = Stored(PendingDocument());
+
+        var outcome = await ProcessAsync(document);
+
+        outcome.ShouldBe(ProcessingOutcome.Failed);
+        document.FailureReason.ShouldBe(ProcessDocumentCommandHandler.DailyLimitReachedReason);
+        await _analyzer.DidNotReceiveWithAnyArgs().AnalyzeAsync(default!, CancellationToken);
+        await _usageLog.DidNotReceiveWithAnyArgs().RecordAsync(default!, default!, default, CancellationToken);
+    }
+
+    [Fact]
+    public async Task Document_beyond_the_owners_daily_analysis_limit_fails_without_calling_the_analyzer()
+    {
+        var document = Stored(PendingDocument());
+        _usageLog.CountForOwnerSinceAsync(document.OwnerId, _time.GetUtcNow().AddDays(-1), Arg.Any<CancellationToken>())
+            .Returns(_limits.DailyAnalysisLimitPerUser);
+
+        var outcome = await ProcessAsync(document);
+
+        outcome.ShouldBe(ProcessingOutcome.Failed);
+        document.FailureReason.ShouldBe(ProcessDocumentCommandHandler.UserDailyLimitReachedReason);
+        await _analyzer.DidNotReceiveWithAnyArgs().AnalyzeAsync(default!, CancellationToken);
+    }
+
+    [Fact]
+    public async Task Text_extraction_is_limited_to_the_analysis_budget()
+    {
+        await ProcessAsync(Stored(PendingDocument()));
+
+        await _extractor.Received(1).ExtractTextAsync(
+            Arg.Any<Stream>(), ProcessDocumentCommandHandler.MaxAnalyzedCharacters, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Document_whose_text_takes_too_long_to_read_fails_without_a_retry()
+    {
+        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(call => WaitUntilCanceledAsync(call.ArgAt<CancellationToken>(2)));
+        var document = Stored(PendingDocument());
+
+        var processing = ProcessAsync(document);
+        _time.Advance(ProcessDocumentCommandHandler.ExtractionTimeout);
+        var outcome = await processing;
+
+        outcome.ShouldBe(ProcessingOutcome.Failed);
+        document.FailureReason.ShouldBe("Reading the document took too long.");
+        await _analyzer.DidNotReceiveWithAnyArgs().AnalyzeAsync(default!, CancellationToken);
+    }
+
+    [Fact]
     public async Task Long_text_is_truncated_before_analysis()
     {
-        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<CancellationToken>())
+        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new string('a', ProcessDocumentCommandHandler.MaxAnalyzedCharacters + 100));
 
         await ProcessAsync(Stored(PendingDocument()));
@@ -246,6 +328,12 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
         await _analyzer.Received(1).AnalyzeAsync(
             Arg.Is<string>(text => text.Length == ProcessDocumentCommandHandler.MaxAnalyzedCharacters),
             Arg.Any<CancellationToken>());
+    }
+
+    private static async Task<string> WaitUntilCanceledAsync(CancellationToken cancellationToken)
+    {
+        await Task.Delay(Timeout.Infinite, cancellationToken);
+        return string.Empty;
     }
 
     private async Task<ProcessingOutcome> ProcessAsync(Document document)

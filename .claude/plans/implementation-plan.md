@@ -89,6 +89,12 @@ README.md
    - Once retries are exhausted, a `Fault<DocumentUploaded>` consumer sets `Failed` and the message lands in the `_error` queue (DLQ).
    - Permanent errors (no text, unsupported file) fail the document immediately, without retries.
 4. **Worker crash:** the attempt's transaction rolls back, so the document is still `Pending`, and RabbitMQ redelivers the unacked message. (The domain can also reclaim a document stuck in `Processing` once its last update is older than a timeout.)
+   - A message that keeps crashing the Worker is stopped. The endpoints use quorum queues, which count unacknowledged deliveries.
+     - A redelivered `DocumentUploaded` is handed (via the endpoint's exchange) to `document-processing-isolated`, which processes one document at a time in a Worker process of its own (`Worker:Role` = `Isolated`, the `worker-isolated` container), so documents merely in flight with a crashing one are not blamed.
+     - There, after 3 interrupted deliveries, the document fails.
+   - Extraction stops after 500 pages or once past the text budget, and times out after 1 minute: the parser runs on its own thread, the Worker stops waiting, and the abandoned parse ends at its next page check. A Worker processes at most 4 documents at once.
+   - Only the 5 years closest to today are checked against Nager.Date.
+   - Logs record where an AI answer was invalid, not its values.
 5. **Real-time:** the API consumes `DocumentStatusChanged` and pushes it through `DocumentsHub` (`/hubs/documents`) to the `user:{id}` group. The UI invalidates the affected TanStack Query queries.
    - Only final statuses (`Completed`, `Failed`) are pushed: `Processing` is never committed on its own (see 2), so the UI shows a pending document as "in progress".
    - Each API instance holds its own connections, so the notifier consumer gets a queue per instance (MassTransit temporary endpoint: exclusive, removed when the instance stops) instead of competing with the other instances. No SignalR backplane is needed.
@@ -102,7 +108,16 @@ README.md
 - Ownership checks live in the handlers: queries are filtered by `OwnerId`, and another user's document returns **404** so its existence is not leaked.
 - OpenAPI document (`Microsoft.AspNetCore.OpenApi`) with the **Scalar UI** at `/scalar` for browsing and trying the API, including a JWT bearer security scheme. Enabled in Development and in the `full` Docker profile.
 - ProblemDetails and a global exception handler.
-- Rate limiting (`RateLimiting` options): fixed window per client IP on the anonymous auth endpoints (20/min), token bucket per user on upload (burst of 10, then 2/min). Rejections are 429 ProblemDetails with `Retry-After`.
+- Rate limiting (`RateLimiting` options):
+  - A fixed window per client IP on the anonymous auth endpoints (20/min); registration has a stricter one (5/h).
+  - A token bucket per user on upload (burst of 10, then 2/min).
+  - Failed logins are throttled per client IP and account (5 per 15 min, `LoginAttemptThrottle`) instead of an account lockout, which would let anyone lock an account out.
+  - Rejections are 429 ProblemDetails with `Retry-After`.
+- Abuse and cost limits (`Documents` options, ADR 021):
+  - at most 200 documents per user;
+  - at most 50 AI analyses per user and 500 overall per 24 h, counted in an append-only `AnalysisUsage` table;
+  - IPv6 clients are limited per /64;
+  - published JWT keys are refused outside Development.
 - Health checks with a JSON report per check: `/health/live` (the process only) and `/health/ready` (Postgres via the DbContext, RabbitMQ via MassTransit's bus check, SeaweedFS by listing the bucket).
 - A 10 MB upload limit in Kestrel/FormOptions, plus validation in the handler.
 
@@ -127,6 +142,9 @@ README.md
 ## Docker
 - `docker-compose.yml` runs postgres:17, rabbitmq:4-management, chrislusf/seaweedfs (S3 API, credentials in `docker/seaweedfs/s3.json`; the app creates the bucket on startup) and aspire-dashboard.
 - The `full` profile adds api, worker and ui, all at http://localhost:8080.
+  - Every published port is bound to `127.0.0.1`: the infrastructure uses public development credentials, and its dashboards have no login.
+  - `JWT_SIGNING_KEY` is empty in `.env.example`, so the API refuses to start until a real key is set.
+  - The Worker has a 1 GB memory limit.
   - The API runs in the Production environment, with migrations (`Database:MigrateOnStartup`) and Scalar (`OpenApi:Enabled`) switched on explicitly. The JWT signing key comes from `JWT_SIGNING_KEY` in `.env`.
   - Start order: the API waits for healthy Postgres, RabbitMQ and SeaweedFS. The Worker waits for a healthy API, which means the migrations are applied. The ui waits for the API too.
   - The API's health check calls `/health/live` through bash's `/dev/tcp`, because the runtime image has no curl.
@@ -167,7 +185,7 @@ README.md
   - Authorization: 401 without a token, and user B gets 404 for user A's document.
   - Processing: upload → worker (in-process MassTransit, fake analyzer, stubbed holidays) → `Completed` → GET analysis → download → delete; a PDF without text → `Failed`; transient errors → retries → `Fault` → `Failed`.
   - SignalR: the owner (and nobody else) is notified over a WebSocket with the token in the query string; no token → 401; the query-string token is ignored outside the hub.
-  - Rate limiting: auth per client IP (the test server assigns each request a random IP unless a test pins one), upload per user.
+  - Rate limiting: auth and registration per client IP (the test server assigns each request a random IP unless a test pins one), upload per user, and the failed-login throttle per account and IP.
   - Health: readiness reports Postgres, storage and the bus; liveness depends on nothing external.
 - **CI** (`.github/workflows/ci.yml`): `dotnet build/test` (Testcontainers runs on ubuntu-latest) and `npm ci && npm run lint && npm run build` for the frontend.
 - **Security:**
