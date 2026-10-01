@@ -1,6 +1,7 @@
 using System.Text;
 using DocumentIntelligence.Application.Abstractions.Analysis;
 using DocumentIntelligence.Domain.Documents;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
@@ -15,14 +16,18 @@ namespace DocumentIntelligence.Infrastructure.TextExtraction;
 /// PdfPig is synchronous and cannot be interrupted inside a page (or while opening the file), so each parse
 /// runs on its own thread and the caller stops waiting at the timeout: the consumer slot is freed and the
 /// document fails. The abandoned parse ends at its next page check, keeping its parser permit until then.
-/// A parse still running <see cref="StuckParseLimit"/> after it was abandoned will not end on its own:
-/// the process is then recycled (the container restarts), which is the only way to stop it.
+/// A parse still running <see cref="StuckParseLimit"/> after it was abandoned will not end on its own, and
+/// recycling the process is the only way to stop it. The Worker is then stopped gracefully: it takes no
+/// new messages and lets the documents in hand finish, so no innocent document is interrupted (or, on
+/// the isolated endpoint, blamed for a crash); the container then restarts. Only if the process is still
+/// alive <see cref="ForcedRecycleLimit"/> later is it killed.
 /// </remarks>
 internal sealed partial class PdfTextExtractor(
     SemaphoreSlim parsers,
     Func<ReadOnlyMemory<byte>, int, CancellationToken, string> parse,
     TimeSpan stuckParseLimit,
-    Action onStuckParse,
+    Action requestGracefulStop,
+    Action forceRecycle,
     TimeProvider timeProvider,
     ILogger<PdfTextExtractor> logger)
     : ITextExtractor
@@ -42,12 +47,19 @@ internal sealed partial class PdfTextExtractor(
 
     public static readonly TimeSpan StuckParseLimit = TimeSpan.FromMinutes(2);
 
-    public PdfTextExtractor(TimeProvider timeProvider, ILogger<PdfTextExtractor> logger)
+    /// <summary>
+    /// Longer than a graceful Worker stop may take (its host shutdown timeout), so the forced kill only
+    /// happens if that stop itself got stuck.
+    /// </summary>
+    public static readonly TimeSpan ForcedRecycleLimit = TimeSpan.FromMinutes(10);
+
+    public PdfTextExtractor(TimeProvider timeProvider, IHostApplicationLifetime lifetime, ILogger<PdfTextExtractor> logger)
         : this(
             new SemaphoreSlim(MaxConcurrentParses, MaxConcurrentParses),
             Extract,
             StuckParseLimit,
-            () => Environment.FailFast("A PDF parse abandoned at its timeout is still running; recycling the Worker."),
+            lifetime.StopApplication,
+            () => Environment.FailFast("A PDF parse is stuck and the graceful stop did not finish; recycling the Worker."),
             timeProvider,
             logger)
     {
@@ -108,14 +120,20 @@ internal sealed partial class PdfTextExtractor(
     private async Task WatchAbandonedParseAsync(Task parsing)
     {
         var finished = await Task.WhenAny(parsing, Task.Delay(stuckParseLimit, timeProvider));
-        if (finished != parsing)
+        if (finished == parsing)
         {
-            LogStuckParse(logger, stuckParseLimit);
-            onStuckParse();
+            // Observe the abandoned parse's outcome (normally a cancellation), so it is not reported as unobserved.
+            _ = parsing.Exception;
+            return;
         }
 
-        // Observe the abandoned parse's outcome (normally a cancellation), so it is not reported as unobserved.
-        _ = parsing.Exception;
+        LogStuckParse(logger, stuckParseLimit);
+        requestGracefulStop();
+
+        // Normally the process has exited long before this; the stuck thread is a background one.
+        await Task.Delay(ForcedRecycleLimit, timeProvider);
+        LogForcedRecycle(logger, ForcedRecycleLimit);
+        forceRecycle();
     }
 
     private static string Extract(ReadOnlyMemory<byte> bytes, int maxCharacters, CancellationToken cancellationToken)
@@ -161,6 +179,9 @@ internal sealed partial class PdfTextExtractor(
         }
     }
 
-    [LoggerMessage(Level = LogLevel.Critical, Message = "A PDF parse abandoned at its timeout is still running after {Limit}; recycling the Worker")]
+    [LoggerMessage(Level = LogLevel.Critical, Message = "A PDF parse abandoned at its timeout is still running after {Limit}; stopping the Worker gracefully so it restarts")]
     private static partial void LogStuckParse(ILogger logger, TimeSpan limit);
+
+    [LoggerMessage(Level = LogLevel.Critical, Message = "The Worker is still running {Limit} after a graceful stop was requested for a stuck PDF parse; killing it")]
+    private static partial void LogForcedRecycle(ILogger logger, TimeSpan limit);
 }

@@ -2,8 +2,10 @@ using System.Text;
 using DocumentIntelligence.Application.Abstractions.Analysis;
 using DocumentIntelligence.Domain.Documents;
 using DocumentIntelligence.Infrastructure.TextExtraction;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using NSubstitute;
 using UglyToad.PdfPig.Content;
 using UglyToad.PdfPig.Core;
 using UglyToad.PdfPig.Fonts.Standard14Fonts;
@@ -17,7 +19,7 @@ public sealed class TextExtractorTests
 
     private static readonly TimeSpan _timeout = TimeSpan.FromMinutes(1);
 
-    private readonly PdfTextExtractor _pdf = new(TimeProvider.System, NullLogger<PdfTextExtractor>.Instance);
+    private readonly PdfTextExtractor _pdf = new(TimeProvider.System, Substitute.For<IHostApplicationLifetime>(), NullLogger<PdfTextExtractor>.Instance);
     private readonly PlainTextExtractor _text = new(TimeProvider.System);
 
     private static CancellationToken CancellationToken => TestContext.Current.CancellationToken;
@@ -150,7 +152,7 @@ public sealed class TextExtractorTests
     }
 
     [Fact]
-    public async Task Parse_abandoned_at_the_timeout_keeps_its_parser_and_recycles_the_worker_when_stuck()
+    public async Task Parse_abandoned_at_the_timeout_keeps_its_parser_and_stops_the_worker_gracefully_when_stuck()
     {
         using var parsers = new SemaphoreSlim(1, 1);
         using var unblock = new ManualResetEventSlim();
@@ -166,6 +168,35 @@ public sealed class TextExtractorTests
 
         time.Advance(PdfTextExtractor.StuckParseLimit);
         await stuck.Task.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken);
+
+        unblock.Set();
+    }
+
+    [Fact]
+    public async Task Worker_is_killed_only_if_the_graceful_stop_does_not_end_it()
+    {
+        using var parsers = new SemaphoreSlim(1, 1);
+        using var unblock = new ManualResetEventSlim();
+        var time = new FakeTimeProvider();
+        var stopRequested = new TaskCompletionSource();
+        var killed = new TaskCompletionSource();
+        var extractor = Extractor(
+            parsers,
+            time,
+            (_, _, _) => { unblock.Wait(); return string.Empty; },
+            () => stopRequested.TrySetResult(),
+            () => killed.TrySetResult());
+
+        var extracting = extractor.ExtractTextAsync(new MemoryStream([1]), MaxCharacters, _timeout, CancellationToken);
+        time.Advance(_timeout);
+        await Should.ThrowAsync<TimeoutException>(() => extracting);
+
+        time.Advance(PdfTextExtractor.StuckParseLimit);
+        await stopRequested.Task.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken);
+        killed.Task.IsCompleted.ShouldBeFalse();
+
+        time.Advance(PdfTextExtractor.ForcedRecycleLimit);
+        await killed.Task.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken);
 
         unblock.Set();
     }
@@ -196,8 +227,16 @@ public sealed class TextExtractorTests
         SemaphoreSlim parsers,
         TimeProvider time,
         Func<ReadOnlyMemory<byte>, int, CancellationToken, string> parse,
-        Action? onStuckParse = null) =>
-        new(parsers, parse, PdfTextExtractor.StuckParseLimit, onStuckParse ?? (() => { }), time, NullLogger<PdfTextExtractor>.Instance);
+        Action? requestGracefulStop = null,
+        Action? forceRecycle = null) =>
+        new(
+            parsers,
+            parse,
+            PdfTextExtractor.StuckParseLimit,
+            requestGracefulStop ?? (() => { }),
+            forceRecycle ?? (() => { }),
+            time,
+            NullLogger<PdfTextExtractor>.Instance);
 
     [Fact]
     public async Task Text_file_is_read_up_to_one_character_past_the_budget()
