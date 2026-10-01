@@ -106,6 +106,16 @@ cd frontend && npm install && npm run dev              # http://localhost:5173
 
 In Development the API applies the EF Core migrations on startup, and the Vite dev server proxies `/api` and `/hubs` to it, so the browser sees a single origin.
 
+### Upgrading an existing setup
+
+The message queues are RabbitMQ quorum queues. A RabbitMQ volume created by an earlier version of this project still holds classic queues of the same names, and a queue cannot change its type, so the Worker would fail to start. Recreate the RabbitMQ volume once (the documents in Postgres and SeaweedFS are kept):
+
+```sh
+docker compose rm -sf rabbitmq
+docker volume rm document-intelligence_rabbitmq-data
+docker compose up -d rabbitmq
+```
+
 ### Claude
 
 Without an API key the Worker uses a deterministic fake analyzer: it finds dates and amounts with regular expressions and logs a warning. Everything else works the same. To use Claude:
