@@ -302,6 +302,19 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
     }
 
     [Fact]
+    public async Task Cancellation_that_is_not_the_extraction_timeout_is_transient()
+    {
+        // E.g. the storage client's own HTTP timeout while the file is being read.
+        _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout."));
+        var document = Stored(PendingDocument());
+
+        await Should.ThrowAsync<TaskCanceledException>(() => ProcessAsync(document));
+
+        document.Status.ShouldNotBe(DocumentStatus.Failed);
+    }
+
+    [Fact]
     public async Task Document_whose_text_takes_too_long_to_read_fails_without_a_retry()
     {
         _extractor.ExtractTextAsync(Arg.Any<Stream>(), Arg.Any<int>(), Arg.Any<CancellationToken>())

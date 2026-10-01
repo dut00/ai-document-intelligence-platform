@@ -119,7 +119,9 @@ internal sealed partial class ProcessDocumentCommandHandler(
             {
                 text = (await extractor.ExtractTextAsync(content, MaxAnalyzedCharacters, extraction.Token)).Trim();
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            // Only our own timeout is permanent; any other cancellation (e.g. a storage request timing out)
+            // is a transient failure and propagates, so the message is retried.
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
                 throw new UnprocessableDocumentException("Reading the document took too long.");
             }
