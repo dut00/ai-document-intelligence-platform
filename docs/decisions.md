@@ -330,7 +330,7 @@ A crash of the Worker process never reaches this policy. The endpoints therefore
   - Each attempt is counted before the password is checked, so concurrent guesses cannot slip past it. After 5 attempts without a success for an account from one IP address within 15 minutes, that address is refused; the owner, on another address, is not affected.
   - The key is a hash of the email as Identity normalizes it, so Unicode look-alikes share a budget and no attacker-sized string is kept.
   - IPv6 clients are counted per /64 prefix, here and in the rate limits.
-  - Across all addresses, an account gets 50 attempts without a success per 15 minutes; beyond that each attempt is delayed by 3 seconds rather than refused, so the owner can still sign in.
+  - Across all addresses, an account gets 50 attempts without a success per 15 minutes; beyond that each attempt is delayed by 3 seconds rather than refused, so the owner can still sign in. The owner's successful login clears that count.
 - **AI output.** Any tag variant that could open or close the `<document>` block is defused with a non-backtracking regular expression (linear time on hostile input). Logs record only where the analysis was invalid, not the values.
 - **Input.** `page` has an upper bound, so the row offset cannot overflow.
 

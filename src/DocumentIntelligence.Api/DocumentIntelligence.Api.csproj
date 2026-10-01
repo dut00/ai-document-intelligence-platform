@@ -14,6 +14,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="DocumentIntelligence.IntegrationTests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\DocumentIntelligence.Application\DocumentIntelligence.Application.csproj" />
     <ProjectReference Include="..\DocumentIntelligence.Infrastructure\DocumentIntelligence.Infrastructure.csproj" />
     <ProjectReference Include="..\DocumentIntelligence.ServiceDefaults\DocumentIntelligence.ServiceDefaults.csproj" />

@@ -111,7 +111,7 @@ README.md
 - Rate limiting (`RateLimiting` options):
   - A fixed window per client IP on the anonymous auth endpoints (20/min); registration has a stricter one (10 per day).
   - A token bucket per user on upload (burst of 10, then 2/min).
-  - Failed logins are throttled per client IP and account (5 per 15 min, `LoginAttemptThrottle`) instead of an account lockout, which would let anyone lock an account out. Across all addresses, beyond 50 attempts per account per 15 min, each attempt is delayed by 3 s.
+  - Failed logins are throttled per client IP and account (5 per 15 min, `LoginAttemptThrottle`) instead of an account lockout, which would let anyone lock an account out. Across all addresses, beyond 50 attempts per account per 15 min, each attempt is delayed by 3 s (it slows sequential guessing only; parallel guessing is bounded by the per-address budgets).
   - Rejections are 429 ProblemDetails with `Retry-After`.
 - Abuse and cost limits (`Documents` options, ADR 021):
   - at most 200 documents per user;

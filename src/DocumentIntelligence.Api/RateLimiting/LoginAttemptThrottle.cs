@@ -84,9 +84,10 @@ internal sealed class LoginAttemptThrottle(
             return cache.GetOrCreate(key, entry =>
             {
                 // The window starts with the first attempt and is not extended by later ones.
-                var windowEnd = timeProvider.GetUtcNow() + options.Value.LoginAttemptWindow;
-                entry.AbsoluteExpiration = windowEnd;
-                return new Attempts(windowEnd);
+                // Relative: the cache keeps its own clock, which need not be timeProvider's.
+                var window = options.Value.LoginAttemptWindow;
+                entry.AbsoluteExpirationRelativeToNow = window;
+                return new Attempts(timeProvider.GetUtcNow() + window);
             })!;
         }
     }
