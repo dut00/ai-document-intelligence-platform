@@ -229,17 +229,21 @@ public sealed class TextExtractorTests
         using var parsers = new SemaphoreSlim(1, 1);
         var time = new FakeTimeProvider();
         var recycled = false;
+        Task? abandoned = null;
         var extractor = Extractor(
             parsers,
             time,
             (_, _, cancellationToken) => { SpinWait.SpinUntil(() => cancellationToken.IsCancellationRequested); throw new OperationCanceledException(cancellationToken); },
-            () => recycled = true);
+            () => recycled = true,
+            parseAbandoned: parsing => abandoned = parsing);
 
         var extracting = extractor.ExtractTextAsync(new MemoryStream([1]), MaxCharacters, _timeout, CancellationToken);
         time.Advance(_timeout);
         await Should.ThrowAsync<TimeoutException>(() => extracting);
 
-        SpinWait.SpinUntil(() => parsers.CurrentCount == 1, TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        // The abandoned parse has ended (and released its parser) before the stuck limit is reached.
+        await Should.ThrowAsync<OperationCanceledException>(() => abandoned!.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken));
+        parsers.CurrentCount.ShouldBe(1);
         time.Advance(PdfTextExtractor.StuckParseLimit);
         await Task.Delay(50, CancellationToken);
         recycled.ShouldBeFalse();
@@ -250,13 +254,15 @@ public sealed class TextExtractorTests
         TimeProvider time,
         Func<ReadOnlyMemory<byte>, int, CancellationToken, string> parse,
         Action? requestGracefulStop = null,
-        Action? forceRecycle = null) =>
+        Action? forceRecycle = null,
+        Action<Task>? parseAbandoned = null) =>
         new(
             parsers,
             parse,
             PdfTextExtractor.StuckParseLimit,
             requestGracefulStop ?? (() => { }),
             forceRecycle ?? (() => { }),
+            parseAbandoned ?? (_ => { }),
             time,
             NullLogger<PdfTextExtractor>.Instance);
 

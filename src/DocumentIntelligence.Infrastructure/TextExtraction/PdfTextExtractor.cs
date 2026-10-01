@@ -28,6 +28,7 @@ internal sealed partial class PdfTextExtractor(
     TimeSpan stuckParseLimit,
     Action requestGracefulStop,
     Action forceRecycle,
+    Action<Task> parseAbandoned,
     TimeProvider timeProvider,
     ILogger<PdfTextExtractor> logger)
     : ITextExtractor
@@ -60,6 +61,7 @@ internal sealed partial class PdfTextExtractor(
             StuckParseLimit,
             lifetime.StopApplication,
             () => Environment.FailFast("A PDF parse is stuck and the graceful stop did not finish; recycling the Worker."),
+            _ => { },
             timeProvider,
             logger)
     {
@@ -114,6 +116,7 @@ internal sealed partial class PdfTextExtractor(
         {
             // Abandoned at the timeout or by the caller (the processing deadline, a stopping consumer): either
             // way the parse may go on, and a stuck one must still get the process recycled.
+            parseAbandoned(parsing);
             _ = WatchAbandonedParseAsync(parsing);
 
             if (timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
