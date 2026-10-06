@@ -32,7 +32,7 @@
     <PackageVersion Include="MassTransit" Version="8.5.11" />
     <PackageVersion Include="MassTransit.RabbitMQ" Version="8.5.11" />
     <PackageVersion Include="MassTransit.EntityFrameworkCore" Version="8.5.11" />
-    <PackageVersion Include="AWSSDK.S3" Version="4.0.104" />
+    <PackageVersion Include="AWSSDK.S3" Version="4.0.104.1" />
   </ItemGroup>
 
   <ItemGroup Label="Document processing">
