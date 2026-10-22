@@ -6,7 +6,7 @@
   <ItemGroup Label="Hosting">
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.13" />
-    <PackageVersion Include="Scalar.AspNetCore" Version="2.18.0" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.18.2" />
   </ItemGroup>
 
   <ItemGroup Label="Application">
@@ -29,25 +29,25 @@
 
   <ItemGroup Label="Messaging and storage">
     <!-- MassTransit stays on v8: v9 requires a commercial license. -->
-    <PackageVersion Include="MassTransit" Version="8.5.11" />
-    <PackageVersion Include="MassTransit.RabbitMQ" Version="8.5.11" />
-    <PackageVersion Include="MassTransit.EntityFrameworkCore" Version="8.5.11" />
-    <PackageVersion Include="AWSSDK.S3" Version="4.0.104.4" />
+    <PackageVersion Include="MassTransit" Version="8.5.12" />
+    <PackageVersion Include="MassTransit.RabbitMQ" Version="8.5.12" />
+    <PackageVersion Include="MassTransit.EntityFrameworkCore" Version="8.5.12" />
+    <PackageVersion Include="AWSSDK.S3" Version="4.0.104.6" />
   </ItemGroup>
 
   <ItemGroup Label="Document processing">
-    <PackageVersion Include="Anthropic" Version="12.57.0" />
+    <PackageVersion Include="Anthropic" Version="13.1.0" />
     <PackageVersion Include="PdfPig" Version="0.1.16" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.11.0" />
   </ItemGroup>
 
   <ItemGroup Label="Observability">
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
-    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.20.0" />
-    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.20.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.20.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.20.0" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.20.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.20.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.20.1" />
   </ItemGroup>
 
   <ItemGroup Label="Testing">
