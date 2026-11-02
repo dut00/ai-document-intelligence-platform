@@ -100,7 +100,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17").Build();
 
-    private readonly IContainer _storage = new ContainerBuilder("chrislusf/seaweedfs:4.47")
+    private readonly IContainer _storage = new ContainerBuilder("chrislusf/seaweedfs:4.50")
         .WithCommand("server", "-dir=/data", "-s3", $"-s3.port={S3Port}", "-s3.config=/etc/seaweedfs/s3.json")
         .WithResourceMapping(Encoding.UTF8.GetBytes(_s3Config), "/etc/seaweedfs/s3.json")
         .WithPortBinding(S3Port, assignRandomHostPort: true)
