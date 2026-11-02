@@ -246,3 +246,5 @@ flowchart LR
 | Integration | the real API in memory (`WebApplicationFactory`), with Postgres and SeaweedFS in Testcontainers and the MassTransit test harness running the Worker's consumers: the auth flow including rotation, reuse and the grace period; ownership (401/404); upload to `Completed` to download to delete; failures and retries to `Fault`; SignalR delivery to the owner only; rate limits and forwarded headers; health |
 
 CI (`.github/workflows/ci.yml`) runs the backend build and tests, the frontend lint and build, and the Docker image build. It also fails on known-vulnerable NuGet or npm (runtime) packages. Dependabot (`.github/dependabot.yml`) opens weekly, grouped update pull requests.
+
+The SeaweedFS image tag is set in two places: `docker-compose.yml` and the test container in `tests/DocumentIntelligence.IntegrationTests/Infrastructure/ApiFactory.cs`. Dependabot updates only the compose file, and CI never starts the compose services, so a green Dependabot pull request says nothing about the new SeaweedFS version. Before merging such a bump, change the tag in `ApiFactory.cs` on its branch, so the integration tests run on the new version.
