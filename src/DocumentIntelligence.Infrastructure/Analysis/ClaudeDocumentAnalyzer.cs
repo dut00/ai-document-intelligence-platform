@@ -32,7 +32,7 @@ internal sealed partial class ClaudeDocumentAnalyzer(
 
     public async Task<AnalysisResult> AnalyzeAsync(string text, CancellationToken cancellationToken)
     {
-        List<MessageParam> messages = [new() { Role = Role.User, Content = RecordAnalysisTool.CreatePrompt(text) }];
+        List<MessageParam> messages = [new UserMessageParam { Content = RecordAnalysisTool.CreatePrompt(text) }];
 
         for (var attempt = 1; ; attempt++)
         {
@@ -53,17 +53,15 @@ internal sealed partial class ClaudeDocumentAnalyzer(
                 throw new UnprocessableDocumentException("The AI returned an invalid analysis.");
             }
 
-            messages.Add(new()
+            messages.Add(new AssistantMessageParam
             {
-                Role = Role.Assistant,
                 Content = new List<ContentBlockParam>
                 {
                     new ToolUseBlockParam { ID = toolUse.ID, Name = toolUse.Name, Input = toolUse.Input },
                 },
             });
-            messages.Add(new()
+            messages.Add(new UserMessageParam
             {
-                Role = Role.User,
                 Content = new List<ContentBlockParam>
                 {
                     new ToolResultBlockParam(toolUse.ID) { IsError = true, Content = RecordAnalysisTool.CreateCorrection(issues.Select(issue => issue.Message)) },

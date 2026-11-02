@@ -92,8 +92,14 @@ public sealed class ClaudeDocumentAnalyzerTests : IDisposable
 
         var messages = JsonNode.Parse(_handler.Requests[1].Body)!["messages"]!.AsArray();
         messages.Count.ShouldBe(3);
+        messages[0]!["role"]!.GetValue<string>().ShouldBe("user");
         messages[1]!["role"]!.GetValue<string>().ShouldBe("assistant");
-        messages[1]!["content"]![0]!["id"]!.GetValue<string>().ShouldBe("toolu_first");
+        var toolUse = messages[1]!["content"]![0]!;
+        toolUse["type"]!.GetValue<string>().ShouldBe("tool_use");
+        toolUse["id"]!.GetValue<string>().ShouldBe("toolu_first");
+        toolUse["name"]!.GetValue<string>().ShouldBe(RecordAnalysisTool.Name);
+        toolUse["input"]!["important_dates"]![0]!["date"]!.GetValue<string>().ShouldBe("11.11.2026");
+        messages[2]!["role"]!.GetValue<string>().ShouldBe("user");
         var toolResult = messages[2]!["content"]![0]!;
         toolResult["type"]!.GetValue<string>().ShouldBe("tool_result");
         toolResult["tool_use_id"]!.GetValue<string>().ShouldBe("toolu_first");
