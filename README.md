@@ -78,7 +78,7 @@ More detail: [docs/architecture.md](docs/architecture.md) and [docs/decisions.md
 | Data | PostgreSQL 17, EF Core (Npgsql), ASP.NET Core Identity (core) |
 | Messaging | MassTransit 8 with RabbitMQ, EF Core transactional outbox and inbox |
 | Storage | SeaweedFS through its S3 API (`AWSSDK.S3`) |
-| AI | Anthropic Claude (official `Anthropic` SDK), `claude-haiku-4-5-20251001` by default |
+| AI | Anthropic Claude (official `Anthropic` SDK), `claude-haiku-5-5` by default |
 | Documents | PdfPig; Nager.Date for public holidays |
 | Real time | SignalR |
 | Frontend | React 19, Vite, TypeScript, React Router, TanStack Query, Tailwind CSS, oxlint |
@@ -164,7 +164,7 @@ Settings come from `appsettings.json`, from environment variables (`Section__Key
 | `Jwt:AccessTokenLifetime` / `RefreshTokenLifetime` | 15 min / 7 days | token lifetimes |
 | `Jwt:RefreshTokenReuseGracePeriod` | 10 s | how long a just-rotated refresh token is still accepted |
 | `Anthropic:ApiKey` (or `ANTHROPIC_API_KEY`) | none, so the fake analyzer | Claude access |
-| `Anthropic:Model`, `MaxTokens`, `Timeout`, `MaxRetries` | Haiku 4.5, 4096, 2 min, 2 | the Claude request |
+| `Anthropic:Model`, `MaxTokens`, `Timeout`, `MaxRetries` | Haiku 5.5, 16000, 2 min, 2 | the Claude request |
 | `Holidays:CountryCode`, `BaseUrl`, `CacheDuration` | `PL`, Nager.Date, 24 h | the calendar check |
 | `Messaging:Retry:*` | 5 retries, 1 s to 30 s | exponential message retry before the DLQ |
 | `RateLimiting:*` | 20 auth requests/min and 10 registrations/day per IP; 5 login attempts without a success per account and IP in 15 min, and a 3 s delay per attempt beyond 50 for an account from all addresses (slows sequential, not parallel, guessing); 10 uploads, then 2/min per user | rate limits |

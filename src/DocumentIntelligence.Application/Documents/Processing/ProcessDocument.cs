@@ -50,7 +50,7 @@ internal sealed partial class ProcessDocumentCommandHandler(
     : ICommandHandler<ProcessDocumentCommand, ProcessingOutcome>
 {
     /// <summary>
-    /// Roughly 15k tokens: bounds the cost and latency of a single analysis.
+    /// Roughly 20k tokens: bounds the cost and latency of a single analysis.
     /// </summary>
     public const int MaxAnalyzedCharacters = 60_000;
 

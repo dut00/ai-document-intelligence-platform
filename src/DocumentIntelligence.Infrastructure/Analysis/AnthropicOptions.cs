@@ -17,10 +17,10 @@ public sealed class AnthropicOptions
     public string? ApiKey { get; set; }
 
     [Required]
-    public string Model { get; set; } = "claude-haiku-4-5-20251001";
+    public string Model { get; set; } = "claude-haiku-5-5";
 
     [Range(256, 32_000)]
-    public int MaxTokens { get; set; } = 4096;
+    public int MaxTokens { get; set; } = 16_000;
 
     public TimeSpan Timeout { get; set; } = TimeSpan.FromMinutes(2);
 

@@ -8,7 +8,7 @@ namespace DocumentIntelligence.Application.Abstractions.Analysis;
 public interface IDocumentAnalyzer
 {
     /// <summary>
-    /// The model recorded with every analysis, e.g. "claude-haiku-4-5-20251001" or "fake".
+    /// The model recorded with every analysis, e.g. "claude-haiku-5-5" or "fake".
     /// </summary>
     string Model { get; }
 

@@ -17,7 +17,7 @@ namespace DocumentIntelligence.UnitTests.Infrastructure;
 /// </summary>
 public sealed class ClaudeDocumentAnalyzerTests : IDisposable
 {
-    private const string Model = "claude-haiku-4-5-20251001";
+    private const string Model = "claude-haiku-5-5";
     private const string DeclinedMessage = "The AI declined to analyze the document.";
     private const string CutOffMessage = "This document needs a longer analysis than the AI can return. Try a shorter document.";
     private const string NoAnalysisMessage = "The AI did not return an analysis.";

@@ -46,7 +46,7 @@ public sealed class DocumentAnalysis : Entity<DocumentId>
     public IReadOnlyList<Risk> PotentialRisks { get; }
 
     /// <summary>
-    /// The model that produced the analysis, e.g. "claude-haiku-4-5-20251001" or "fake".
+    /// The model that produced the analysis, e.g. "claude-haiku-5-5" or "fake".
     /// </summary>
     public string Model { get; }
 

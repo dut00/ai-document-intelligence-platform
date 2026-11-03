@@ -23,7 +23,7 @@ A full-stack, production-oriented portfolio project, published as a public GitHu
 ## Technical decisions
 - **Backend:** .NET, ASP.NET Core Minimal API with OpenAPI + Scalar UI, Clean Architecture + DDD + CQRS with custom handlers and decorators (no MediatR — license), `Result<T>` → ProblemDetails, EF Core + PostgreSQL, ASP.NET Core Identity (core) + JWT.
 - **Messaging:** MassTransit v8 (OSS; v9 is commercial) + RabbitMQ, EF Core transactional outbox/inbox.
-- **AI:** official `Anthropic` NuGet package, default model `claude-haiku-4-5-20251001` (configurable).
+- **AI:** official `Anthropic` NuGet package, default model `claude-haiku-5-5` (configurable).
 - **Other:** SeaweedFS via S3 API (`AWSSDK.S3`, storage), PdfPig (PDF text), Nager.Date (holidays, cached per year/country, default `PL`).
 - **Frontend:** React + Vite + TypeScript, React Router, TanStack Query, Tailwind, `@microsoft/signalr`.
 - **Infra:** `docker compose up` for Postgres, RabbitMQ, SeaweedFS, Aspire Dashboard; `full` profile also runs api, worker, ui.

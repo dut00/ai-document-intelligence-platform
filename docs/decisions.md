@@ -130,11 +130,12 @@ A crash of the Worker process never reaches this policy. The endpoints therefore
 **Context.** Structured extraction from business documents does not need the largest model. Cost and latency matter for every upload, and the project must run without a key: for reviewers, in CI and in tests.
 
 **Decision.**
-- The default model is `claude-haiku-4-5-20251001`, configurable through `Anthropic:Model`.
-- The input is capped at 60,000 characters, about 15k tokens.
+- The default model is `claude-haiku-5-5`, configurable through `Anthropic:Model`.
+- The input is capped at 60,000 characters, about 20k tokens.
+- `Anthropic:MaxTokens` is 16,000. A 28,000-character contract needed more than 6,000 for its answer and fit in 16,000. An answer cut off at the limit fails the document, so a longer document can still fail this way.
 - Without an API key, a deterministic `FakeDocumentAnalyzer` runs (regular expressions for dates and amounts) and logs a warning.
 
-**Consequences.** Anyone can clone the project and run the whole pipeline offline. The analysis quality then depends on the fake, which is clearly flagged. Switching to a larger model is a configuration change.
+**Consequences.** Anyone can clone the project and run the whole pipeline offline. The analysis quality then depends on the fake, which is clearly flagged. Switching to a larger model is a configuration change. The requests are not streamed, so a full 16,000-token answer fits the 2-minute `Anthropic:Timeout` only above about 133 tokens per second; that speed has not been measured for an answer of that size.
 
 **Alternatives.** Requiring a key: nobody could try the project without paying.
 
