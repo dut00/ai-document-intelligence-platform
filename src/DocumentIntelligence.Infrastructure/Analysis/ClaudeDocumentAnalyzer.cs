@@ -37,6 +37,7 @@ internal sealed partial class ClaudeDocumentAnalyzer(
         for (var attempt = 1; ; attempt++)
         {
             var response = await CreateMessageAsync(messages, cancellationToken);
+            EnsureFinished(response);
             var toolUse = FindToolUse(response);
 
             var issues = Parse(toolUse.Input, out var result);
@@ -95,6 +96,30 @@ internal sealed partial class ClaudeDocumentAnalyzer(
         }
     }
 
+    /// <summary>
+    /// Checked before the tool input is read, and only a finished tool call passes: a cut-off answer can
+    /// still be valid and silently miss its last sections, and a correction would hit the same limit again.
+    /// </summary>
+    private static void EnsureFinished(Message response)
+    {
+        if (response.StopReason == StopReason.ToolUse)
+        {
+            return;
+        }
+
+        if (response.StopReason == StopReason.Refusal)
+        {
+            throw new UnprocessableDocumentException("The AI declined to analyze the document.");
+        }
+
+        if (response.StopReason == StopReason.MaxTokens)
+        {
+            throw new UnprocessableDocumentException("This document needs a longer analysis than the AI can return. Try a shorter document.");
+        }
+
+        throw new UnprocessableDocumentException("The AI did not return an analysis.");
+    }
+
     private static ToolUseBlock FindToolUse(Message response)
     {
         foreach (var block in response.Content)
@@ -105,10 +130,7 @@ internal sealed partial class ClaudeDocumentAnalyzer(
             }
         }
 
-        throw new UnprocessableDocumentException(
-            response.StopReason == StopReason.Refusal
-                ? "The AI declined to analyze the document."
-                : "The AI did not return an analysis.");
+        throw new UnprocessableDocumentException("The AI did not return an analysis.");
     }
 
     private List<Issue> Parse(IReadOnlyDictionary<string, JsonElement> input, out AnalysisResult? result)

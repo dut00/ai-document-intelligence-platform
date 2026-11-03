@@ -18,6 +18,9 @@ namespace DocumentIntelligence.UnitTests.Infrastructure;
 public sealed class ClaudeDocumentAnalyzerTests : IDisposable
 {
     private const string Model = "claude-haiku-4-5-20251001";
+    private const string DeclinedMessage = "The AI declined to analyze the document.";
+    private const string CutOffMessage = "This document needs a longer analysis than the AI can return. Try a shorter document.";
+    private const string NoAnalysisMessage = "The AI did not return an analysis.";
 
     private static readonly object _validInput = new
     {
@@ -151,7 +154,54 @@ public sealed class ClaudeDocumentAnalyzerTests : IDisposable
         var exception = await Should.ThrowAsync<UnprocessableDocumentException>(
             () => _analyzer.AnalyzeAsync("INVOICE", CancellationToken));
 
-        exception.Message.ShouldBe("The AI declined to analyze the document.");
+        exception.Message.ShouldBe(DeclinedMessage);
+    }
+
+    [Theory]
+    [InlineData("refusal", DeclinedMessage)]
+    [InlineData("max_tokens", CutOffMessage)]
+    [InlineData("model_context_window_exceeded", NoAnalysisMessage)]
+    [InlineData("pause_turn", NoAnalysisMessage)]
+    [InlineData("end_turn", NoAnalysisMessage)]
+    public async Task Unfinished_tool_call_is_unprocessable_even_when_its_input_is_valid(string stopReason, string message)
+    {
+        _handler.RespondWith(HttpStatusCode.OK, ToolUseResponse(_validInput, stopReason: stopReason));
+
+        var exception = await Should.ThrowAsync<UnprocessableDocumentException>(
+            () => _analyzer.AnalyzeAsync("INVOICE", CancellationToken));
+
+        exception.Message.ShouldBe(message);
+        _handler.Requests.ShouldHaveSingleItem();
+    }
+
+    [Theory]
+    [InlineData("refusal", DeclinedMessage)]
+    [InlineData("max_tokens", CutOffMessage)]
+    public async Task Unfinished_answer_to_the_correction_is_unprocessable(string stopReason, string message)
+    {
+        var invalidInput = JsonSerializer.SerializeToNode(_validInput)!;
+        invalidInput["summary"] = "";
+        _handler
+            .RespondWith(HttpStatusCode.OK, ToolUseResponse(invalidInput))
+            .RespondWith(HttpStatusCode.OK, ToolUseResponse(_validInput, stopReason: stopReason));
+
+        var exception = await Should.ThrowAsync<UnprocessableDocumentException>(
+            () => _analyzer.AnalyzeAsync("INVOICE", CancellationToken));
+
+        exception.Message.ShouldBe(message);
+        _handler.Requests.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Answer_without_a_tool_call_is_unprocessable()
+    {
+        _handler.RespondWith(HttpStatusCode.OK, MessageResponse([new { type = "text", text = "Here is the analysis." }], "tool_use"));
+
+        var exception = await Should.ThrowAsync<UnprocessableDocumentException>(
+            () => _analyzer.AnalyzeAsync("INVOICE", CancellationToken));
+
+        exception.Message.ShouldBe(NoAnalysisMessage);
+        _handler.Requests.ShouldHaveSingleItem();
     }
 
     [Fact]
@@ -174,8 +224,8 @@ public sealed class ClaudeDocumentAnalyzerTests : IDisposable
         exception.StatusCode.ShouldBe(statusCode);
     }
 
-    private static string ToolUseResponse(object input, string toolUseId = "toolu_01") =>
-        MessageResponse([new { type = "tool_use", id = toolUseId, name = RecordAnalysisTool.Name, input }], "tool_use");
+    private static string ToolUseResponse(object input, string toolUseId = "toolu_01", string stopReason = "tool_use") =>
+        MessageResponse([new { type = "tool_use", id = toolUseId, name = RecordAnalysisTool.Name, input }], stopReason);
 
     private static string MessageResponse(object[] content, string stopReason) =>
         JsonSerializer.Serialize(new

@@ -99,7 +99,7 @@ sequenceDiagram
   - the `xmin` concurrency token rejects a save if the row changed since it was read.
 - **No early `Processing` commit.** The whole attempt runs in the consumer's outbox transaction, and `Processing` is never saved on its own. Committing it first would lock the row for the whole AI call and block a concurrent delete. The `xmin` check on the final save still catches a document that changed or was deleted in the meantime.
 - **Transient and permanent failures:**
-  - `UnprocessableDocumentException` is permanent: no text layer, an unsupported or unreadable file, an AI request the service rejected, or an analysis that is still invalid after the correction. The document is marked `Failed` right away, with no retry.
+  - `UnprocessableDocumentException` is permanent: no text layer, an unsupported or unreadable file, an AI request the service rejected, an answer the model declined to give or that hit the token limit, or an analysis that is still invalid after the correction. The document is marked `Failed` right away, with no retry.
   - Anything else is thrown, and MassTransit retries it with exponential backoff (`Messaging:Retry`). Before that, the Anthropic SDK has already retried rate limits and 5xx responses itself.
   - One attempt is capped at 5 minutes (`ProcessDocumentCommand.ProcessingDeadline`), deliberately less than the AI call's own budget: with the default timeout and SDK retries a request may take up to 6 minutes, and about 12 with the correction round. An attempt that runs into the cap is cancelled and retried as a whole.
   - Nager.Date calls use `Microsoft.Extensions.Http.Resilience`.
@@ -131,6 +131,7 @@ sequenceDiagram
   - currencies must be three-letter codes;
   - lengths are bounded.
 - **One correction.** An invalid answer is sent back once as an `is_error` tool result that lists the problems. A second invalid answer fails the document.
+- **Unfinished answers.** The tool input is read only when the stop reason is `tool_use`. Anything else fails the document with no correction, including an answer cut off by `Anthropic:MaxTokens`: its input could still pass validation while missing its last sections, and a correction would hit the same limit.
 - **Logs.** The log records only where the answer was invalid (property and rule), never the values, because those may quote the document.
 - **Cost limits.**
   - Before each analysis the Worker checks two daily caps in an append-only usage log (`AnalysisUsage`): `Documents:DailyAnalysisLimitPerUser` (20) and `Documents:DailyAnalysisLimit` across all users (500). Over a cap, the document fails and asks the owner to upload it again later.
