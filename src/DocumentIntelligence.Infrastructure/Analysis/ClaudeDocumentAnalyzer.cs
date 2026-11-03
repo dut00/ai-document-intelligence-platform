@@ -142,7 +142,7 @@ internal sealed partial class ClaudeDocumentAnalyzer(
         catch (JsonException exception)
         {
             result = null;
-            return [new Issue($"{exception.Path ?? "$"} (schema)", $"The input does not match the tool schema: {exception.Message}")];
+            return [new Issue($"{exception.Path ?? "$"} (schema)", $"{exception.Path ?? "$"}: The input does not match the tool schema: {exception.Message}")];
         }
 
         if (result is null)

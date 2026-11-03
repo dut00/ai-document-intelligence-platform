@@ -56,7 +56,7 @@ internal static class RecordAnalysisTool
         $"""
         The analysis was rejected because it is invalid:
         {string.Join(Environment.NewLine, errors.Select(error => $"- {error}"))}
-        Call {Name} again with a corrected analysis.
+        Call {Name} again with a corrected analysis. If the document does not state a value an item needs, remove that item: do not invent a value or use 0.
         """;
 
     private static string CreateSchema() =>
@@ -104,7 +104,7 @@ internal static class RecordAnalysisTool
                 "type": "object",
                 "properties": {
                   "description": { "type": "string", "description": "What the amount is, e.g. \"Total due\"." },
-                  "amount": { "type": "number" },
+                  "amount": { "type": "number", "description": "The figure written in the document. When the document states no figure, leave the whole item out: never use 0 as a placeholder." },
                   "currency": { "type": "string", "description": "ISO 4217 code, e.g. \"PLN\" or \"EUR\"." }
                 },
                 "required": ["description", "amount", "currency"]

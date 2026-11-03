@@ -146,6 +146,54 @@ public sealed class ClaudeDocumentAnalyzerTests : IDisposable
         result.FinancialInformation.ShouldHaveSingleItem().Amount.ShouldBe(1200.50m);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Missing_amount_is_corrected_instead_of_becoming_zero(bool removed)
+    {
+        var invalidInput = InputWithoutAmount(removed);
+        _handler
+            .RespondWith(HttpStatusCode.OK, ToolUseResponse(invalidInput))
+            .RespondWith(HttpStatusCode.OK, ToolUseResponse(_validInput));
+
+        var result = await _analyzer.AnalyzeAsync("INVOICE", CancellationToken);
+
+        result.FinancialInformation.ShouldHaveSingleItem().Amount.ShouldBe(1200.50m);
+        _handler.Requests.Count.ShouldBe(2);
+        var correction = JsonNode.Parse(_handler.Requests[1].Body)!["messages"]![2]!["content"]![0]!["content"]!.GetValue<string>();
+        correction.ShouldContain("financial_information[1]", Case.Sensitive);
+        correction.ShouldContain("do not invent a value or use 0", Case.Sensitive);
+        _logger.Collector.GetSnapshot().ShouldHaveSingleItem().Message.ShouldContain("financial_information[1]", Case.Sensitive);
+    }
+
+    [Fact]
+    public async Task Amount_still_missing_after_the_correction_is_unprocessable()
+    {
+        var invalidInput = InputWithoutAmount(removed: true);
+        _handler
+            .RespondWith(HttpStatusCode.OK, ToolUseResponse(invalidInput))
+            .RespondWith(HttpStatusCode.OK, ToolUseResponse(invalidInput));
+
+        var exception = await Should.ThrowAsync<UnprocessableDocumentException>(
+            () => _analyzer.AnalyzeAsync("INVOICE", CancellationToken));
+
+        exception.Message.ShouldBe("The AI returned an invalid analysis.");
+        _handler.Requests.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Stated_zero_amount_is_accepted()
+    {
+        var input = JsonSerializer.SerializeToNode(_validInput)!;
+        input["financial_information"]![0]!["amount"] = 0;
+        _handler.RespondWith(HttpStatusCode.OK, ToolUseResponse(input));
+
+        var result = await _analyzer.AnalyzeAsync("INVOICE", CancellationToken);
+
+        result.FinancialInformation.ShouldHaveSingleItem().Amount.ShouldBe(0m);
+        _handler.Requests.ShouldHaveSingleItem();
+    }
+
     [Fact]
     public async Task Refusal_is_unprocessable()
     {
@@ -222,6 +270,22 @@ public sealed class ClaudeDocumentAnalyzerTests : IDisposable
         var exception = await Should.ThrowAsync<AnthropicApiException>(() => _analyzer.AnalyzeAsync("INVOICE", CancellationToken));
 
         exception.StatusCode.ShouldBe(statusCode);
+    }
+
+    /// <summary>
+    /// A valid first item and a second one with its amount removed or null.
+    /// </summary>
+    private static JsonNode InputWithoutAmount(bool removed)
+    {
+        var input = JsonSerializer.SerializeToNode(_validInput)!;
+        var item = new JsonObject { ["description"] = "Penalty", ["currency"] = "PLN" };
+        if (!removed)
+        {
+            item["amount"] = null;
+        }
+
+        input["financial_information"]!.AsArray().Add(item);
+        return input;
     }
 
     private static string ToolUseResponse(object input, string toolUseId = "toolu_01", string stopReason = "tool_use") =>

@@ -129,6 +129,7 @@ sequenceDiagram
   - dates must be real `YYYY-MM-DD` values;
   - enum values must be known;
   - currencies must be three-letter codes;
+  - every financial item must have an amount, since a missing one would read as 0 (a stated 0 is accepted);
   - lengths are bounded.
 - **One correction.** An invalid answer is sent back once as an `is_error` tool result that lists the problems. A second invalid answer fails the document.
 - **Unfinished answers.** The tool input is read only when the stop reason is `tool_use`. Anything else fails the document with no correction, including an answer cut off by `Anthropic:MaxTokens`: its input could still pass validation while missing its last sections, and a correction would hit the same limit.
