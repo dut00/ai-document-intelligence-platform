@@ -9,6 +9,7 @@ internal sealed class AnalysisUsageConfiguration : IEntityTypeConfiguration<Anal
     {
         builder.ToTable("AnalysisUsage");
         builder.HasKey(usage => usage.Id);
+        builder.Property(usage => usage.Attempts).HasDefaultValue(1);
 
         // One row per document however often its processing is retried or redelivered. No foreign key:
         // the row must outlive the document.

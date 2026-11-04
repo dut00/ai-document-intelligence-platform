@@ -22,6 +22,13 @@ public sealed class StubHttpMessageHandler : HttpMessageHandler
         return this;
     }
 
+    public StubHttpMessageHandler FailWith(Exception exception)
+    {
+        _responses.Enqueue(() => throw exception);
+
+        return this;
+    }
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var body = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken);

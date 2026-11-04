@@ -13,12 +13,7 @@ internal sealed class AnalysisUsageLog(ApplicationDbContext dbContext) : IAnalys
 
     public async Task RecordAsync(UserId ownerId, DocumentId documentId, DateTimeOffset analyzedAt, CancellationToken cancellationToken)
     {
-        // A connection of its own, never enlisted in the consumer's transaction: the row must be committed
-        // before the AI is called and must survive a rollback of the processing attempt.
-        var connectionString = new NpgsqlConnectionStringBuilder(dbContext.Database.GetConnectionString()) { Enlist = false };
-
-        await using var connection = new NpgsqlConnection(connectionString.ConnectionString);
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await OpenOwnConnectionAsync(cancellationToken);
 
         await using var command = new NpgsqlCommand(
             """
@@ -35,9 +30,60 @@ internal sealed class AnalysisUsageLog(ApplicationDbContext dbContext) : IAnalys
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task<int> RecordRetryAsync(DocumentId documentId, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenOwnConnectionAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand(
+            """
+            UPDATE "AnalysisUsage" SET "Attempts" = "Attempts" + 1
+            WHERE "DocumentId" = @documentId
+            RETURNING "Attempts"
+            """,
+            connection);
+        command.Parameters.AddWithValue("documentId", documentId.Value);
+
+        return (int)(await command.ExecuteScalarAsync(cancellationToken)
+            ?? throw new InvalidOperationException($"Document {documentId} has no usage record."));
+    }
+
+    public async Task RefundAttemptAsync(DocumentId documentId, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenOwnConnectionAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand(
+            """
+            UPDATE "AnalysisUsage" SET "Attempts" = GREATEST("Attempts" - 1, 0)
+            WHERE "DocumentId" = @documentId
+            """,
+            connection);
+        command.Parameters.AddWithValue("documentId", documentId.Value);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public Task<int> CountSinceAsync(DateTimeOffset since, CancellationToken cancellationToken) =>
         dbContext.AnalysisUsage.CountAsync(usage => usage.AnalyzedAt >= since, cancellationToken);
 
     public Task<int> CountForOwnerSinceAsync(UserId ownerId, DateTimeOffset since, CancellationToken cancellationToken) =>
         dbContext.AnalysisUsage.CountAsync(usage => usage.OwnerId == ownerId.Value && usage.AnalyzedAt >= since, cancellationToken);
+
+    // A connection of its own, never enlisted in the consumer's transaction: a write must be committed before
+    // the AI is called and must survive a rollback of the processing attempt.
+    private async Task<NpgsqlConnection> OpenOwnConnectionAsync(CancellationToken cancellationToken)
+    {
+        var connectionString = new NpgsqlConnectionStringBuilder(dbContext.Database.GetConnectionString()) { Enlist = false };
+        var connection = new NpgsqlConnection(connectionString.ConnectionString);
+
+        try
+        {
+            await connection.OpenAsync(cancellationToken);
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
+    }
 }

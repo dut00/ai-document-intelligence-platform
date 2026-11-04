@@ -22,7 +22,7 @@ public sealed class AnthropicOptions
     [Range(256, 32_000)]
     public int MaxTokens { get; set; } = 16_000;
 
-    public TimeSpan Timeout { get; set; } = TimeSpan.FromMinutes(2);
+    public TimeSpan Timeout { get; set; } = TimeSpan.FromMinutes(3);
 
     /// <summary>
     /// Retries of rate-limited and failed requests inside the SDK, before the message itself is retried.

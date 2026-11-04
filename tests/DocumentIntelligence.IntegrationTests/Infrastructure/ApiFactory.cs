@@ -40,9 +40,10 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     public const string Password = "Password123";
 
     /// <summary>
-    /// Retries per message in tests: a failing message faults after this many attempts plus one.
+    /// Retries per message in tests: a failing message faults after this many attempts plus one. Above the
+    /// analysis attempt cap of 3, like the default settings, so that the cap is what stops a paid failure.
     /// </summary>
-    public const int MessageRetryLimit = 2;
+    public const int MessageRetryLimit = 3;
 
     /// <summary>
     /// Auth requests per client IP address, and uploads per user, before the API answers 429.

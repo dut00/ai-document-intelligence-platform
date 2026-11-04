@@ -87,7 +87,7 @@ Each record is short: the context, the decision, what it costs, and what else wa
 
 **Context.** Transient errors such as AI rate limits or network failures deserve backoff. On RabbitMQ, MassTransit's delayed redelivery needs the delayed-message-exchange plugin, which the stock image does not include.
 
-**Decision.** `UseMessageRetry` with exponential intervals (`Messaging:Retry`, by default 5 retries from 1 s to 30 s), on top of the Anthropic SDK's own retries. Once the retries run out, a `Fault<DocumentUploaded>` consumer marks the document `Failed`.
+**Decision.** `UseMessageRetry` with exponential intervals (`Messaging:Retry`, by default 5 retries from 1 s to 30 s), on top of the Anthropic SDK's own retries. Once the retries run out, a `Fault<DocumentUploaded>` consumer marks the document `Failed`. A failure after a possibly paid AI request stops earlier, at the attempt cap ([021](#021-abuse-and-cost-limits-from-the-security-audit)), which fails the document without a fault.
 
 **Consequences.** A retrying message keeps its consumer slot for the whole sequence: the backoff adds about a minute on top of the attempts themselves, and each attempt can include a slow Claude call. That is acceptable at this scale, and it works with a stock broker.
 
@@ -135,7 +135,7 @@ A crash of the Worker process never reaches this policy. The endpoints therefore
 - `Anthropic:MaxTokens` is 16,000. A 28,000-character contract needed more than 6,000 for its answer and fit in 16,000. An answer cut off at the limit fails the document, so a longer document can still fail this way.
 - Without an API key, a deterministic `FakeDocumentAnalyzer` runs (regular expressions for dates and amounts) and logs a warning.
 
-**Consequences.** Anyone can clone the project and run the whole pipeline offline. The analysis quality then depends on the fake, which is clearly flagged. Switching to a larger model is a configuration change. The requests are not streamed, so a full 16,000-token answer fits the 2-minute `Anthropic:Timeout` only above about 133 tokens per second; that speed has not been measured for an answer of that size.
+**Consequences.** Anyone can clone the project and run the whole pipeline offline. The analysis quality then depends on the fake, which is clearly flagged. Switching to a larger model is a configuration change. The requests are not streamed, so a full 16,000-token answer fits the 3-minute `Anthropic:Timeout` only above about 89 tokens per second, and with a correction of the same size inside the 5-minute deadline only above about 107; that speed has not been measured for an answer of that size.
 
 **Alternatives.** Requiring a key: nobody could try the project without paying.
 
@@ -325,7 +325,8 @@ A crash of the Worker process never reaches this policy. The endpoints therefore
   - Registration is limited to 10 per IP address per day.
   - A user keeps at most 200 documents (`Documents:MaxDocumentsPerUser`).
   - At most 20 documents per user and 500 across all users are analyzed in any 24 hours; with the registration limit, one address can use at most 200 of those (`Documents:DailyAnalysisLimitPerUser`, `Documents:DailyAnalysisLimit`). Beyond that, a document fails with a request to upload it again later.
-  - The caps count an append-only usage log, which deleting documents does not shrink, and which includes analyses that failed after invalid answers.
+  - The caps count a usage log whose rows are never deleted, which deleting documents does not shrink, and which includes analyses that failed after invalid answers.
+  - The caps count a document once, however often it is retried. So at most 3 attempts per document may cost money (`Documents:MaxAnalysisAttemptsPerDocument`), counted in the same log and committed before each attempt, so that a rollback or a Worker crash does not reset them. The next attempt fails the document. With the correction round that is up to 6 answers for one counted document, and more requests if abandoned ones are billed, so the caps bound documents rather than exact spend. An attempt is given back when its first request got a 429 or 5xx, or its connection failed before the request was sent, and in less time than one request's timeout. As far as the client can tell, that excludes a generated answer, though a gateway 5xx after a finished generation cannot be told apart. `Messaging:Retry` bounds these attempts per delivery, and a Worker crash starts a new delivery. A time limit on the analysis was tried first and rejected: it stopped only slow answers, and it also failed documents permanently during rate limits and network outages that had cost nothing.
   - Only the 5 years closest to today are checked against the holiday calendar.
 - **Logins.** The Identity lockout is replaced by `LoginAttemptThrottle`.
   - Each attempt is counted before the password is checked, so concurrent guesses cannot slip past it. After 5 attempts without a success for an account from one IP address within 15 minutes, that address is refused; the owner, on another address, is not affected.

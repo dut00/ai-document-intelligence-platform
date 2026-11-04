@@ -256,12 +256,79 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
     {
         var document = Stored(PendingDocument());
         _usageLog.IsRecordedAsync(document.Id, Arg.Any<CancellationToken>()).Returns(true);
+        _usageLog.RecordRetryAsync(document.Id, Arg.Any<CancellationToken>()).Returns(2);
         _usageLog.CountSinceAsync(Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>()).Returns(_limits.DailyAnalysisLimit);
 
         var outcome = await ProcessAsync(document);
 
         outcome.ShouldBe(ProcessingOutcome.Completed);
         await _usageLog.DidNotReceiveWithAnyArgs().RecordAsync(default!, default!, default, CancellationToken);
+    }
+
+    [Fact]
+    public async Task Unavailable_ai_service_gives_the_attempt_back_and_stays_transient()
+    {
+        _analyzer.AnalyzeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new AiServiceUnavailableException("Unavailable."));
+        var document = Stored(PendingDocument());
+
+        await Should.ThrowAsync<AiServiceUnavailableException>(() => ProcessAsync(document));
+
+        await _usageLog.Received(1).RefundAttemptAsync(document.Id, Arg.Any<CancellationToken>());
+        document.Status.ShouldNotBe(DocumentStatus.Failed);
+    }
+
+    [Fact]
+    public async Task Failing_refund_stays_transient()
+    {
+        _analyzer.AnalyzeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new AiServiceUnavailableException("Unavailable."));
+        var document = Stored(PendingDocument());
+        _usageLog.RefundAttemptAsync(document.Id, Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("The database is down."));
+
+        await Should.ThrowAsync<InvalidOperationException>(() => ProcessAsync(document));
+
+        document.Status.ShouldNotBe(DocumentStatus.Failed);
+    }
+
+    [Fact]
+    public async Task Other_transient_failure_of_the_analysis_keeps_the_attempt_counted()
+    {
+        _analyzer.AnalyzeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new TimeoutException("Slow answer."));
+        var document = Stored(PendingDocument());
+
+        await Should.ThrowAsync<TimeoutException>(() => ProcessAsync(document));
+
+        await _usageLog.DidNotReceiveWithAnyArgs().RefundAttemptAsync(default!, CancellationToken);
+    }
+
+    [Fact]
+    public async Task Last_allowed_attempt_still_reaches_the_analyzer()
+    {
+        var document = Stored(PendingDocument());
+        _usageLog.IsRecordedAsync(document.Id, Arg.Any<CancellationToken>()).Returns(true);
+        _usageLog.RecordRetryAsync(document.Id, Arg.Any<CancellationToken>()).Returns(_limits.MaxAnalysisAttemptsPerDocument);
+
+        var outcome = await ProcessAsync(document);
+
+        outcome.ShouldBe(ProcessingOutcome.Completed);
+    }
+
+    [Fact]
+    public async Task Attempt_past_the_cap_fails_the_document_without_calling_the_analyzer()
+    {
+        var document = Stored(PendingDocument());
+        _usageLog.IsRecordedAsync(document.Id, Arg.Any<CancellationToken>()).Returns(true);
+        _usageLog.RecordRetryAsync(document.Id, Arg.Any<CancellationToken>()).Returns(_limits.MaxAnalysisAttemptsPerDocument + 1);
+
+        var outcome = await ProcessAsync(document);
+
+        outcome.ShouldBe(ProcessingOutcome.Failed);
+        document.Status.ShouldBe(DocumentStatus.Failed);
+        document.FailureReason.ShouldBe(ProcessDocumentCommand.AnalysisAttemptsExhaustedReason);
+        await _analyzer.DidNotReceiveWithAnyArgs().AnalyzeAsync(default!, CancellationToken);
     }
 
     [Fact]
@@ -345,7 +412,7 @@ public sealed class ProcessDocumentCommandHandlerTests : IDisposable
         var processing = ProcessAsync(document);
         _time.Advance(ProcessDocumentCommand.ProcessingDeadline);
 
-        // Retried by the message pipeline, not failed: a slow AI service is a transient problem.
+        // Retried by the message pipeline, not failed: a slow AI service is a transient problem, up to the attempt cap.
         await Should.ThrowAsync<TimeoutException>(() => processing);
         document.Status.ShouldNotBe(DocumentStatus.Failed);
     }

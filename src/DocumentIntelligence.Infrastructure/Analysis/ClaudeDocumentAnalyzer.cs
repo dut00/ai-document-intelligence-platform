@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Net;
 using System.Text.Json;
 using Anthropic;
 using Anthropic.Exceptions;
@@ -74,6 +76,7 @@ internal sealed partial class ClaudeDocumentAnalyzer(
     private async Task<Message> CreateMessageAsync(List<MessageParam> messages, CancellationToken cancellationToken)
     {
         var settings = options.Value;
+        var started = Stopwatch.GetTimestamp();
 
         try
         {
@@ -94,7 +97,26 @@ internal sealed partial class ClaudeDocumentAnalyzer(
             // The request itself was rejected, e.g. the document is too long: retrying cannot help.
             throw new UnprocessableDocumentException("The AI service rejected the document.", exception);
         }
+        catch (Exception exception) when (
+            messages.Count == 1 // Before a correction, an answer has already been paid for.
+            && Stopwatch.GetElapsedTime(started) < settings.Timeout // Otherwise an SDK retry may hide a timed-out try.
+            && IsServiceUnavailable(exception))
+        {
+            throw new AiServiceUnavailableException("The AI service is unavailable.", exception);
+        }
     }
+
+    // Only failures that exclude a generated answer. A request timeout or a connection lost after sending is
+    // deliberately not here: the requests are not streamed, so the model may have finished by then.
+    private static bool IsServiceUnavailable(Exception exception) =>
+        exception is AnthropicApiException { StatusCode: HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError }
+            or AnthropicIOException
+            {
+                InnerException: HttpRequestException
+                {
+                    HttpRequestError: HttpRequestError.NameResolutionError or HttpRequestError.ConnectionError or HttpRequestError.SecureConnectionError,
+                },
+            };
 
     /// <summary>
     /// Checked before the tool input is read, and only a finished tool call passes: a cut-off answer can

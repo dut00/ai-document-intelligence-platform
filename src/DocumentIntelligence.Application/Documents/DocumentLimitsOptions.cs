@@ -29,4 +29,13 @@ public sealed class DocumentLimitsOptions
     /// </summary>
     [Range(1, int.MaxValue)]
     public int DailyAnalysisLimitPerUser { get; init; } = 20;
+
+    /// <summary>
+    /// Processing attempts that may cost money for one document, retries and redeliveries included. The daily
+    /// limits count a document once, so this is what bounds its cost: with the correction round, up to two
+    /// answers per attempt. Further attempts fail the document. Attempts refused by an unavailable AI service do
+    /// not count; <c>Messaging:Retry</c> bounds those.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int MaxAnalysisAttemptsPerDocument { get; init; } = 3;
 }

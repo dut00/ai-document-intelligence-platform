@@ -28,11 +28,15 @@ public sealed record ProcessDocumentCommand(DocumentId DocumentId) : ICommand<Pr
     /// </summary>
     /// <remarks>
     /// Deliberately shorter than the AI call's own budget: with the default <c>Anthropic:Timeout</c> and
-    /// <c>MaxRetries</c> one request may take up to 6 minutes, and about 12 with the correction round. An
+    /// <c>MaxRetries</c> one request may take up to 9 minutes, and about 18 with the correction round. An
     /// attempt that runs into the deadline is cut short and retried as a whole (a transient failure), which
-    /// keeps a stopping Worker's wait bounded.
+    /// keeps a stopping Worker's wait bounded. <see cref="DocumentLimitsOptions.MaxAnalysisAttemptsPerDocument"/>
+    /// bounds how often that can repeat.
     /// </remarks>
     public static readonly TimeSpan ProcessingDeadline = TimeSpan.FromMinutes(5);
+
+    public const string AnalysisAttemptsExhaustedReason =
+        "The AI could not finish analyzing this document. Please upload it again later.";
 }
 
 internal sealed partial class ProcessDocumentCommandHandler(
@@ -101,7 +105,7 @@ internal sealed partial class ProcessDocumentCommandHandler(
         {
             var text = await ExtractTextAsync(document, work.Token);
             await ReserveAnalysisAsync(document, work.Token);
-            var result = await AnalyzeAsync(text, work.Token);
+            var result = await AnalyzeAsync(document.Id, text, work.Token);
             analysis = await CreateAnalysisAsync(document.Id, result, work.Token);
         }
         catch (OperationCanceledException exception) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -168,9 +172,17 @@ internal sealed partial class ProcessDocumentCommandHandler(
     // Concurrent Workers can overshoot by a few documents; the limits do not need to be exact.
     private async Task ReserveAnalysisAsync(Document document, CancellationToken cancellationToken)
     {
-        // A retry or redelivery of a document that was already counted (and perhaps already paid for).
+        // A retry or redelivery of a document that was already counted (and perhaps already paid for): it does
+        // not count against the daily limits again, so its own cap is what stops it from repeating paid requests.
         if (await usageLog.IsRecordedAsync(document.Id, cancellationToken))
         {
+            var attempts = await usageLog.RecordRetryAsync(document.Id, cancellationToken);
+            if (attempts > limits.Value.MaxAnalysisAttemptsPerDocument)
+            {
+                LogAnalysisAttemptsExhausted(logger, document.Id, limits.Value.MaxAnalysisAttemptsPerDocument);
+                throw new UnprocessableDocumentException(ProcessDocumentCommand.AnalysisAttemptsExhaustedReason);
+            }
+
             return;
         }
 
@@ -194,7 +206,7 @@ internal sealed partial class ProcessDocumentCommandHandler(
         await usageLog.RecordAsync(document.OwnerId, document.Id, now, cancellationToken);
     }
 
-    private async Task<AnalysisResult> AnalyzeAsync(string text, CancellationToken cancellationToken)
+    private async Task<AnalysisResult> AnalyzeAsync(DocumentId documentId, string text, CancellationToken cancellationToken)
     {
         var started = timeProvider.GetTimestamp();
         var outcome = "error";
@@ -208,6 +220,12 @@ internal sealed partial class ProcessDocumentCommandHandler(
         catch (UnprocessableDocumentException)
         {
             outcome = "invalid";
+            throw;
+        }
+        catch (AiServiceUnavailableException)
+        {
+            // An outage must not use up the attempts: Messaging:Retry bounds these failures per delivery.
+            await usageLog.RefundAttemptAsync(documentId, cancellationToken);
             throw;
         }
         finally
@@ -251,6 +269,9 @@ internal sealed partial class ProcessDocumentCommandHandler(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "The {Scope} daily limit of {Limit} analyses has been reached; failing the document")]
     private static partial void LogDailyLimitReached(ILogger logger, string scope, int limit);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Document {DocumentId} used up its {Limit} analysis attempts; failing it")]
+    private static partial void LogAnalysisAttemptsExhausted(ILogger logger, DocumentId documentId, int limit);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Text of document {DocumentId} truncated to {MaxLength} characters")]
     private static partial void LogTruncated(ILogger logger, DocumentId documentId, int maxLength);

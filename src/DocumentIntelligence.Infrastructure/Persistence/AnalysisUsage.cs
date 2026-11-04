@@ -13,4 +13,10 @@ internal sealed class AnalysisUsage
     public Guid DocumentId { get; init; }
 
     public DateTimeOffset AnalyzedAt { get; init; }
+
+    /// <summary>
+    /// How many processing attempts may have cost money for this document: those that reached the AI step,
+    /// minus those that got no answer because the service was unavailable.
+    /// </summary>
+    public int Attempts { get; init; }
 }

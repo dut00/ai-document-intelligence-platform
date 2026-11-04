@@ -5,11 +5,13 @@ namespace DocumentIntelligence.IntegrationTests.Infrastructure;
 
 /// <summary>
 /// Decorates the configured analyzer (the fake one in tests): a document containing
-/// <see cref="Marker"/> fails with a transient error on every attempt.
+/// <see cref="Marker"/> fails with a transient error on every attempt, and one containing
+/// <see cref="UnavailableMarker"/> finds the AI service unavailable on every attempt.
 /// </summary>
 public sealed class TransientFailureAnalyzer(IDocumentAnalyzer inner) : IDocumentAnalyzer
 {
     public const string Marker = "[simulate-transient-failure]";
+    public const string UnavailableMarker = "[simulate-unavailable-service]";
 
     private static readonly ConcurrentDictionary<string, int> _attempts = new();
 
@@ -19,12 +21,15 @@ public sealed class TransientFailureAnalyzer(IDocumentAnalyzer inner) : IDocumen
 
     public Task<AnalysisResult> AnalyzeAsync(string text, CancellationToken cancellationToken)
     {
-        if (!text.Contains(Marker, StringComparison.Ordinal))
+        var unavailable = text.Contains(UnavailableMarker, StringComparison.Ordinal);
+        if (!unavailable && !text.Contains(Marker, StringComparison.Ordinal))
         {
             return inner.AnalyzeAsync(text, cancellationToken);
         }
 
         _attempts.AddOrUpdate(text, 1, (_, attempts) => attempts + 1);
-        throw new HttpRequestException("Simulated transient failure of the AI service.");
+        throw unavailable
+            ? new AiServiceUnavailableException("Simulated outage of the AI service.")
+            : new HttpRequestException("Simulated transient failure of the AI service.");
     }
 }

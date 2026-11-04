@@ -2,7 +2,10 @@ extern alias worker;
 
 using System.Net;
 using System.Text;
+using System.Transactions;
+using DocumentIntelligence.Application.Abstractions.Analysis;
 using DocumentIntelligence.Application.Documents;
+using DocumentIntelligence.Application.Documents.Processing;
 using DocumentIntelligence.Contracts.Documents;
 using DocumentIntelligence.Domain.Documents;
 using DocumentIntelligence.Domain.Documents.Analysis;
@@ -132,6 +135,28 @@ public sealed class DocumentProcessingTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task Retries_of_a_recorded_analysis_are_counted_outside_the_caller_transaction()
+    {
+        var (_, ownerId) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
+        var document = await StorePendingDocumentWithoutMessageAsync(ownerId);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var usageLog = scope.ServiceProvider.GetRequiredService<IAnalysisUsageLog>();
+        await usageLog.RecordAsync(document.OwnerId, document.Id, DateTimeOffset.UtcNow, CancellationToken);
+
+        // Guards against enlisting in an ambient transaction: the count must survive its rollback.
+        using (new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled))
+        {
+            (await usageLog.RecordRetryAsync(document.Id, CancellationToken)).ShouldBe(2);
+        }
+
+        (await usageLog.RecordRetryAsync(document.Id, CancellationToken)).ShouldBe(3);
+
+        await usageLog.RefundAttemptAsync(document.Id, CancellationToken);
+        (await usageLog.RecordRetryAsync(document.Id, CancellationToken)).ShouldBe(3);
+    }
+
+    [Fact]
     public async Task Redelivered_document_is_processed_again_in_isolation_rather_than_failed()
     {
         var (client, ownerId) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
@@ -184,10 +209,26 @@ public sealed class DocumentProcessingTests(ApiFactory factory)
     }
 
     [Fact]
-    public async Task Document_fails_once_transient_errors_exhaust_the_retries()
+    public async Task Paid_transient_failures_stop_at_the_attempt_cap()
     {
         var (client, _) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
         var text = $"Contract {TransientFailureAnalyzer.Marker} {Guid.NewGuid()}";
+
+        var id = await UploadAsync(client, "flaky.txt", "text/plain", Encoding.UTF8.GetBytes(text));
+        var details = await client.WaitUntilProcessedAsync(id);
+
+        details.Status.ShouldBe(DocumentStatus.Failed);
+        details.FailureReason.ShouldBe(ProcessDocumentCommand.AnalysisAttemptsExhaustedReason);
+        TransientFailureAnalyzer.AttemptsFor(text).ShouldBe(new DocumentLimitsOptions().MaxAnalysisAttemptsPerDocument);
+        (await factory.ConsumedAsync<DocumentStatusChanged>(message => message.DocumentId == id && message.Status == "Failed"))
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Document_fails_once_an_unavailable_ai_service_exhausts_the_retries()
+    {
+        var (client, _) = await factory.CreateAuthenticatedClientAsync(CancellationToken);
+        var text = $"Contract {TransientFailureAnalyzer.UnavailableMarker} {Guid.NewGuid()}";
 
         var id = await UploadAsync(client, "flaky.txt", "text/plain", Encoding.UTF8.GetBytes(text));
         var details = await client.WaitUntilProcessedAsync(id);

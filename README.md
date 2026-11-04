@@ -164,11 +164,11 @@ Settings come from `appsettings.json`, from environment variables (`Section__Key
 | `Jwt:AccessTokenLifetime` / `RefreshTokenLifetime` | 15 min / 7 days | token lifetimes |
 | `Jwt:RefreshTokenReuseGracePeriod` | 10 s | how long a just-rotated refresh token is still accepted |
 | `Anthropic:ApiKey` (or `ANTHROPIC_API_KEY`) | none, so the fake analyzer | Claude access |
-| `Anthropic:Model`, `MaxTokens`, `Timeout`, `MaxRetries` | Haiku 5.5, 16000, 2 min, 2 | the Claude request |
+| `Anthropic:Model`, `MaxTokens`, `Timeout`, `MaxRetries` | Haiku 5.5, 16000, 3 min, 2 | the Claude request |
 | `Holidays:CountryCode`, `BaseUrl`, `CacheDuration` | `PL`, Nager.Date, 24 h | the calendar check |
 | `Messaging:Retry:*` | 5 retries, 1 s to 30 s | exponential message retry before the DLQ |
 | `RateLimiting:*` | 20 auth requests/min and 10 registrations/day per IP; 5 login attempts without a success per account and IP in 15 min, and a 3 s delay per attempt beyond 50 for an account from all addresses (slows sequential, not parallel, guessing); 10 uploads, then 2/min per user | rate limits |
-| `Documents:MaxDocumentsPerUser`, `DailyAnalysisLimitPerUser`, `DailyAnalysisLimit` | 200, 20, 500 | storage quota per user; AI analyses per user and across all users in 24 h |
+| `Documents:MaxDocumentsPerUser`, `DailyAnalysisLimitPerUser`, `DailyAnalysisLimit`, `MaxAnalysisAttemptsPerDocument` | 200, 20, 500, 3 | storage quota per user; AI analyses per user and across all users in 24 h; attempts that may cost money for one document |
 | `ForwardedHeaders:KnownProxies` / `KnownNetworks` | none (loopback only) | proxies trusted for `X-Forwarded-For` |
 | `OpenApi:Enabled`, `Database:MigrateOnStartup` | on in Development | Scalar UI and migrations outside Development |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Aspire Dashboard (Development) | telemetry export; empty turns it off |

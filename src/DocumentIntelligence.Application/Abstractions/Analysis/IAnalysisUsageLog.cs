@@ -18,6 +18,18 @@ public interface IAnalysisUsageLog
     /// </summary>
     Task RecordAsync(UserId ownerId, DocumentId documentId, DateTimeOffset analyzedAt, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Counts one more attempt for a recorded document, committed at once like <see cref="RecordAsync"/>, and
+    /// returns the attempts so far: the first analysis included.
+    /// </summary>
+    Task<int> RecordRetryAsync(DocumentId documentId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Takes back the current attempt, which got no answer. The analysis itself stays recorded,
+    /// so the document keeps counting against the daily limits.
+    /// </summary>
+    Task RefundAttemptAsync(DocumentId documentId, CancellationToken cancellationToken);
+
     Task<int> CountSinceAsync(DateTimeOffset since, CancellationToken cancellationToken);
 
     Task<int> CountForOwnerSinceAsync(UserId ownerId, DateTimeOffset since, CancellationToken cancellationToken);

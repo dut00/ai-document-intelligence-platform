@@ -86,7 +86,7 @@ README.md
    - Save the analysis, mark the document `Completed`, and publish `DocumentStatusChanged` through the outbox.
 3. **Transient failures** (AI 429/5xx, network):
    - `Microsoft.Extensions.Http.Resilience` on the Nager.Date HttpClient, the SDK's own retries for Claude, plus MassTransit `UseMessageRetry` (exponential, `Messaging:Retry`).
-   - Once retries are exhausted, a `Fault<DocumentUploaded>` consumer sets `Failed` and the message lands in the `_error` queue (DLQ).
+   - Once retries are exhausted, a `Fault<DocumentUploaded>` consumer sets `Failed` and the message lands in the `_error` queue (DLQ). A document stops earlier, as `Failed` with no fault, after 3 attempts that may have cost money (`Documents:MaxAnalysisAttemptsPerDocument`).
    - Permanent errors (no text, unsupported file) fail the document immediately, without retries.
 4. **Worker crash:** the attempt's transaction rolls back, so the document is still `Pending`, and RabbitMQ redelivers the unacked message. (The domain can also reclaim a document stuck in `Processing` once its last update is older than a timeout.)
    - A message that keeps crashing the Worker is stopped. The endpoints use quorum queues, which count unacknowledged deliveries.
@@ -115,7 +115,7 @@ README.md
   - Rejections are 429 ProblemDetails with `Retry-After`.
 - Abuse and cost limits (`Documents` options, ADR 021):
   - at most 200 documents per user;
-  - at most 20 AI analyses per user and 500 overall per 24 h (10 registrations per IP per day keep one address at 200), counted in an append-only `AnalysisUsage` table;
+  - at most 20 AI analyses per user and 500 overall per 24 h (10 registrations per IP per day keep one address at 200), counted in an `AnalysisUsage` table whose rows are never deleted;
   - IPv6 clients are limited per /64;
   - published JWT keys are refused outside Development.
 - Health checks with a JSON report per check: `/health/live` (the process only) and `/health/ready` (Postgres via the DbContext, RabbitMQ via MassTransit's bus check, SeaweedFS by listing the bucket).
@@ -183,7 +183,7 @@ README.md
 - **Integration:**
   - Auth: register → login → refresh → logout.
   - Authorization: 401 without a token, and user B gets 404 for user A's document.
-  - Processing: upload → worker (in-process MassTransit, fake analyzer, stubbed holidays) → `Completed` → GET analysis → download → delete; a PDF without text → `Failed`; transient errors → retries → `Fault` → `Failed`.
+  - Processing: upload → worker (in-process MassTransit, fake analyzer, stubbed holidays) → `Completed` → GET analysis → download → delete; a PDF without text → `Failed`; transient errors → retries → `Fault` → `Failed`, or the attempt cap → `Failed`.
   - SignalR: the owner (and nobody else) is notified over a WebSocket with the token in the query string; no token → 401; the query-string token is ignored outside the hub.
   - Rate limiting: auth and registration per client IP (the test server assigns each request a random IP unless a test pins one), upload per user, and the failed-login throttle per account and IP.
   - Health: readiness reports Postgres, storage and the bus; liveness depends on nothing external.

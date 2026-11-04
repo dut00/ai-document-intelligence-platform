@@ -263,13 +263,57 @@ public sealed class ClaudeDocumentAnalyzerTests : IDisposable
     [Theory]
     [InlineData(HttpStatusCode.TooManyRequests, "rate_limit_error")]
     [InlineData(HttpStatusCode.InternalServerError, "api_error")]
-    public async Task Service_errors_propagate_to_be_retried(HttpStatusCode statusCode, string errorType)
+    public async Task Service_errors_on_the_first_request_cost_nothing(HttpStatusCode statusCode, string errorType)
     {
         _handler.RespondWith(statusCode, ErrorResponse(errorType, "try again later"));
 
-        var exception = await Should.ThrowAsync<AnthropicApiException>(() => _analyzer.AnalyzeAsync("INVOICE", CancellationToken));
+        var exception = await Should.ThrowAsync<AiServiceUnavailableException>(() => _analyzer.AnalyzeAsync("INVOICE", CancellationToken));
 
-        exception.StatusCode.ShouldBe(statusCode);
+        exception.InnerException.ShouldBeAssignableTo<AnthropicApiException>()!.StatusCode.ShouldBe(statusCode);
+    }
+
+    [Theory]
+    [InlineData(HttpRequestError.NameResolutionError)]
+    [InlineData(HttpRequestError.ConnectionError)]
+    [InlineData(HttpRequestError.SecureConnectionError)]
+    public async Task Connection_failing_before_the_request_is_sent_costs_nothing(HttpRequestError error)
+    {
+        _handler.FailWith(new HttpRequestException(error, "Could not connect."));
+
+        await Should.ThrowAsync<AiServiceUnavailableException>(() => _analyzer.AnalyzeAsync("INVOICE", CancellationToken));
+    }
+
+    [Fact]
+    public async Task Connection_lost_after_sending_stays_a_paid_failure()
+    {
+        _handler.FailWith(new HttpRequestException(HttpRequestError.ResponseEnded, "The response ended prematurely."));
+
+        await Should.ThrowAsync<AnthropicIOException>(() => _analyzer.AnalyzeAsync("INVOICE", CancellationToken));
+    }
+
+    [Fact]
+    public async Task Service_error_after_a_possible_timeout_stays_a_paid_failure()
+    {
+        _handler.RespondWith(HttpStatusCode.InternalServerError, ErrorResponse("api_error", "try again later"));
+        var analyzer = new ClaudeDocumentAnalyzer(
+            _client,
+            new AnalysisResultValidator(),
+            Options.Create(new AnthropicOptions { ApiKey = "test-key", Model = Model, Timeout = TimeSpan.Zero }),
+            _logger);
+
+        await Should.ThrowAsync<AnthropicApiException>(() => analyzer.AnalyzeAsync("INVOICE", CancellationToken));
+    }
+
+    [Fact]
+    public async Task Service_error_on_the_correction_stays_a_paid_failure()
+    {
+        var invalidInput = JsonSerializer.SerializeToNode(_validInput)!;
+        invalidInput["summary"] = "";
+        _handler
+            .RespondWith(HttpStatusCode.OK, ToolUseResponse(invalidInput))
+            .RespondWith(HttpStatusCode.InternalServerError, ErrorResponse("api_error", "try again later"));
+
+        await Should.ThrowAsync<AnthropicApiException>(() => _analyzer.AnalyzeAsync("INVOICE", CancellationToken));
     }
 
     /// <summary>
