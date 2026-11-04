@@ -251,3 +251,28 @@ flowchart LR
 CI (`.github/workflows/ci.yml`) runs the backend build and tests, the frontend lint and build, and the Docker image build. It also fails on known-vulnerable NuGet or npm (runtime) packages. Dependabot (`.github/dependabot.yml`) opens weekly, grouped update pull requests.
 
 The SeaweedFS image tag is set in two places: `docker-compose.yml` and the test container in `tests/DocumentIntelligence.IntegrationTests/Infrastructure/ApiFactory.cs`. Dependabot updates only the compose file, and CI never starts the compose services, so a green Dependabot pull request says nothing about the new SeaweedFS version. Before merging such a bump, change the tag in `ApiFactory.cs` on its branch, so the integration tests run on the new version.
+
+## Known gaps
+
+Found in reviews and left for later. None of them blocks anything today.
+
+**AI analysis**
+- **Live checks.** The attempt cap and the refund of an attempt have run only against stubs, and the wording against a placeholder 0 has never been run against a model. Run a few documents through the real API.
+- **Placeholder amounts.** A stated 0 is accepted on purpose, so a 0 the model uses as a placeholder is stored as a real amount. Only prompt wording asks it not to; no code can tell the two apart.
+- **Prompt injection.** No check detects an injection the model followed: the validator enforces only the shape of the answer. The [live runs](ai-development.md) were one run per document, so resistance to injection is not measured. The correction round also sends model-chosen values back outside the untrusted-data frame (`AnalysisResultValidator`, `{PropertyValue}`).
+- **Partial analysis looks complete.** Text past 60,000 characters or 500 pages never reaches the model, and the owner is not told. A list over 50 items is rejected, so the model chooses what to drop during the correction, or the document fails. The schema does not state the item or length limits, so the model learns them only from a paid correction.
+- **NUL characters.** The validator does not reject `\u0000` in model output, Postgres refuses it at save, and that failure is retried, up to the attempt cap.
+
+**Cost and availability**
+- **Spend is not measured.** `response.Usage` is not read, so tokens are not recorded and there is no token budget. The 60,000-character cap also limits characters, not tokens, and text such as CJK may take several times the estimated 20k tokens.
+- **The answer-speed margin is unmeasured.** A full 16,000-token answer needs about 89 tokens per second to fit the request timeout, and about 107 with a correction of the same size inside the deadline.
+- **Refunded attempts.** A gateway 5xx after a finished generation is refunded although it may have been billed. These attempts are bounded by `Messaging:Retry` per delivery, each with up to 3 requests (`Anthropic:MaxRetries`), and a Worker crash starts a new delivery, up to the isolated endpoint's 3.
+- **Hanging network.** A network that hangs instead of refusing uses up the attempts and fails the document, after about 15 minutes.
+- **Paid result lost to the deadline.** The calendar step runs on the same deadline as the analysis, so running out there discards a finished answer and repeats it, up to the attempt cap.
+- **Slot time.** The queue has no per-user fairness, so one account's slow documents delay everyone. Extraction runs before the daily limits and before the attempt cap, so hostile PDFs can hold slots and parser permits without counting against either. In the worst case, with attempts that run out of time before they are counted, a delivery holds a slot for about 31 minutes. That is past RabbitMQ's default 30-minute `consumer_timeout`, which the repository does not override, so the broker would requeue the message as an interrupted delivery (not tried against a broker).
+
+**Settings and tooling**
+- **Unvalidated limits.** `Anthropic:Timeout` has no validation. `Anthropic:MaxTokens` allows up to 32,000, and the SDK has a guard against long non-streaming requests; whether it fires at that value is not verified.
+- **Failure metric.** `ai.analysis.duration` groups every permanent AI failure under `outcome=invalid`: cut-off answers, refusals, rejected requests and invalid answers.
+- **Untested path.** No test pins that a response body failing mid-read stays counted as a paid attempt.
+- **`dotnet-ef`.** The local tool (10.0.12) is older than the runtime (10.0.14).
