@@ -192,7 +192,7 @@ README.md
   - CI and `/precommit` fail on known-vulnerable packages: `dotnet list package --vulnerable --include-transitive`, and `npm audit --omit=dev --audit-level=high`.
   - `/precommit` also scans the change for secrets.
   - Dependabot opens weekly, grouped update pull requests for NuGet, npm, Docker images in the Dockerfiles and `docker-compose.yml` (minor and patch updates only) and GitHub Actions.
-  - The `security-reviewer` agent reviews security-relevant changes and audits the whole repository on request.
+  - The `reviewer` agent also reviews the security of each change and audits the whole repository on request.
 
 ## Implementation order
 0. Housekeeping: save an English feedback memory ("all project files, plans and memory in English; user writes in Polish"), then copy this plan to `.claude/plans/implementation-plan.md` in the repo (committed; the source of truth from then on).

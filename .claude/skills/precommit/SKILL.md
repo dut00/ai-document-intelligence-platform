@@ -57,7 +57,7 @@ docker compose --profile full build
 
 ## 3d. Security checks
 
-Mechanical checks only; the judgment part is the `security-reviewer` agent.
+Mechanical checks only; the judgment part is the `reviewer` agent.
 
 **Vulnerable packages.** Always run both:
 
