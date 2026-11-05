@@ -6,7 +6,7 @@
   <ItemGroup Label="Hosting">
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.14" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.14" />
-    <PackageVersion Include="Scalar.AspNetCore" Version="2.18.5" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.19.0" />
   </ItemGroup>
 
   <ItemGroup Label="Application">
@@ -32,11 +32,11 @@
     <PackageVersion Include="MassTransit" Version="8.5.12" />
     <PackageVersion Include="MassTransit.RabbitMQ" Version="8.5.12" />
     <PackageVersion Include="MassTransit.EntityFrameworkCore" Version="8.5.12" />
-    <PackageVersion Include="AWSSDK.S3" Version="4.0.104.8" />
+    <PackageVersion Include="AWSSDK.S3" Version="4.0.104.9" />
   </ItemGroup>
 
   <ItemGroup Label="Document processing">
-    <PackageVersion Include="Anthropic" Version="13.3.0" />
+    <PackageVersion Include="Anthropic" Version="13.5.0" />
     <PackageVersion Include="PdfPig" Version="0.1.16" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.11.0" />
   </ItemGroup>
